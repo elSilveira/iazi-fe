@@ -175,8 +175,10 @@ export const deleteUserAddress = async (addressId: string) => {
 };
 
 // --- Notifications API Functions ---
-export const fetchNotifications = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/notifications", { params });
+export const fetchNotifications = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/notifications", validParams ? { params: validParams } : {});
   return response.data;
 };
 
@@ -191,14 +193,18 @@ export const markAllNotificationsAsRead = async () => {
 };
 
 // --- Categories API Functions ---
-export const fetchCategories = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/categories", { params });
+export const fetchCategories = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/categories", validParams ? { params: validParams } : {});
   return response.data;
 };
 
 // --- Services API Functions ---
-export const fetchServices = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/services", { params });
+export const fetchServices = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/services", validParams ? { params: validParams } : {});
   return response.data;
 };
 
@@ -208,8 +214,10 @@ export const fetchServiceDetails = async (serviceId: string) => {
 };
 
 // --- Professionals API Functions ---
-export const fetchProfessionals = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/professionals", { params });
+export const fetchProfessionals = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/professionals", validParams ? { params: validParams } : {});
   return response.data;
 };
 
@@ -433,8 +441,10 @@ export const cancelAppointment = async (appointmentId: string) => {
 };
 
 // --- Reviews API Functions ---
-export const fetchReviews = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/reviews", { params });
+export const fetchReviews = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/reviews", validParams ? { params: validParams } : {});
   return response.data;
 };
 
@@ -506,8 +516,10 @@ export const fetchMyReviews = async () => {
 };
 
 // --- Companies API Functions ---
-export const fetchCompanies = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/companies", { params });
+export const fetchCompanies = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/companies", validParams ? { params: validParams } : {});
   return response.data;
 };
 
@@ -664,8 +676,10 @@ export const fetchAppointments = async (params: Record<string, unknown> = {}) =>
 // Note: createAppointment is already defined in the Booking API Functions section above
 
 // --- Search API Functions ---
-export const fetchSearchResults = async (params: Record<string, unknown> = {}) => {
-  const response = await apiClient.get("/search", { params });
+export const fetchSearchResults = async (params?: Record<string, unknown>) => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/search", validParams ? { params: validParams } : {});
   return response.data;
 };
 
