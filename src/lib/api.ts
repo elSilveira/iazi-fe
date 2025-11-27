@@ -8,7 +8,6 @@ const USER_KEY = "user";
 // Create Axios instance with API base URL
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002/api",
-  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
