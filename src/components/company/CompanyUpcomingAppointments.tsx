@@ -13,9 +13,11 @@ export interface CompanyAppointment {
   startTime: string;
   endTime: string;
   status: string;
-  service?: { id: string; name: string };
+  price?: number;
+  service?: { id: string; name: string; price?: number | string };
   user?: { id: string; name: string; avatar?: string };
   professional?: { id: string; name: string };
+  userId?: string;
 }
 
 interface CompanyUpcomingAppointmentsProps {

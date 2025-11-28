@@ -246,7 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: typeof userPayload.role === "string" ? userPayload.role.toLowerCase() as UserRole : undefined,
           professionalId,
           companyId,
-          isProfessional: userPayload.isProfessional ?? !!professionalId ?? (userPayload.role === "PROFESSIONAL" || userPayload.role === "professional"),
+          isProfessional: userPayload.isProfessional ?? (!!professionalId || userPayload.role === "PROFESSIONAL" || userPayload.role === "professional"),
           hasCompany: userPayload.hasCompany ?? !!companyId,
           isAdmin: userPayload.isAdmin ?? (userPayload.role === "ADMIN" || userPayload.role === "admin"),
           admin: userPayload.admin ?? false,

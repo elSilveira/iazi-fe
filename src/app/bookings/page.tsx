@@ -35,7 +35,8 @@ import {
   CheckCircle,
   AlertCircle,
   CalendarDays,
-  Star
+  Star,
+  Repeat
 } from "lucide-react";
 import Link from "next/link";
 import { format, parseISO, isPast, isFuture, isToday } from "date-fns";
@@ -346,6 +347,16 @@ function BookingsPageContent() {
                   <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
                   Avaliado
                 </Badge>
+              )}
+
+              {/* Botão Repetir Agendamento para concluídos e cancelados */}
+              {(apt.status === "COMPLETED" || apt.status === "CANCELLED" || apt.status === "NO_SHOW") && professionalId && firstService?.id && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/booking/${professionalId}?serviceId=${firstService.id}`}>
+                    <Repeat className="h-4 w-4 mr-1" />
+                    Repetir Agendamento
+                  </Link>
+                </Button>
               )}
 
               {isUpcoming && professionalId && (

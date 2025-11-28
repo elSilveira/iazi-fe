@@ -58,16 +58,17 @@ export default function CompanyDashboardPage() {
       (apt) => new Date(apt.startTime).toDateString() === today
     ).length;
 
-    const monthlyRevenue = appointments.reduce((sum, apt: CompanyAppointment & { price?: number }) => {
+    const monthlyRevenue = appointments.reduce((sum, apt) => {
       const apptMonth = new Date(apt.startTime).getMonth();
-      const price = apt.service?.price || apt.price || 0;
+      const servicePrice = apt.service?.price;
+      const price = typeof servicePrice === 'string' ? parseFloat(servicePrice) : (servicePrice || apt.price || 0);
       return apptMonth === currentMonth ? sum + price : sum;
     }, 0);
 
     const clientsThisMonth = new Set(
       appointments
         .filter((apt) => new Date(apt.startTime).getMonth() === currentMonth)
-        .map((apt: CompanyAppointment & { userId?: string }) => apt.userId || apt.user?.id)
+        .map((apt) => apt.userId || apt.user?.id)
     ).size;
 
     return {
