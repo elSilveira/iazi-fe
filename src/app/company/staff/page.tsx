@@ -130,10 +130,6 @@ export default function CompanyStaffPage() {
           staff={filteredStaff}
           isLoading={isLoading}
           onRemove={handleRemoveStaff}
-          onViewProfile={(member) => {
-            // Could navigate to staff profile
-            toast.info(`Ver perfil de ${member.name}`);
-          }}
         />
 
         {/* Add Staff Dialog */}

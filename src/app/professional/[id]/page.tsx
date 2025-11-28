@@ -184,7 +184,7 @@ export default function ProfessionalProfilePage() {
   const params = useParams();
   const router = useRouter();
   const professionalId = params.id as string;
-  const [activeTab, setActiveTab] = useState("about");
+  const [activeTab, setActiveTab] = useState("services");
   
   // Availability tab state
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -379,21 +379,21 @@ export default function ProfessionalProfilePage() {
           {/* Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="w-full justify-start flex-wrap h-auto">
-              <TabsTrigger value="about" className="gap-2">
-                <User className="h-4 w-4" />
-                Sobre
-              </TabsTrigger>
               <TabsTrigger value="services" className="gap-2">
                 <FileText className="h-4 w-4" />
                 Serviços ({professional.services?.length || 0})
               </TabsTrigger>
-              <TabsTrigger value="experience" className="gap-2">
-                <Briefcase className="h-4 w-4" />
-                Experiência
-              </TabsTrigger>
               <TabsTrigger value="availability" className="gap-2">
                 <CalendarIcon className="h-4 w-4" />
                 Disponibilidade
+              </TabsTrigger>
+              <TabsTrigger value="about" className="gap-2">
+                <User className="h-4 w-4" />
+                Sobre
+              </TabsTrigger>
+              <TabsTrigger value="experience" className="gap-2">
+                <Briefcase className="h-4 w-4" />
+                Experiência
               </TabsTrigger>
               <TabsTrigger value="reviews" className="gap-2">
                 <Star className="h-4 w-4" />
@@ -404,49 +404,6 @@ export default function ProfessionalProfilePage() {
                 Portfólio
               </TabsTrigger>
             </TabsList>
-
-            <TabsContent value="about">
-              <Card>
-                <CardContent className="p-6 space-y-6">
-                  <div>
-                    <h2 className="text-xl font-semibold mb-4">Sobre</h2>
-                    {professional.bio ? (
-                      <p className="text-muted-foreground whitespace-pre-wrap">
-                        {professional.bio}
-                      </p>
-                    ) : (
-                      <p className="text-muted-foreground italic">
-                        Nenhuma biografia fornecida.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3">Informações de Contato</h3>
-                    <div className="space-y-3">
-                      {professional.address && (
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-5 w-5 text-primary" />
-                          <span>{professional.address}</span>
-                        </div>
-                      )}
-                      {professional.phone && (
-                        <div className="flex items-center gap-2">
-                          <Phone className="h-5 w-5 text-primary" />
-                          <span>{professional.phone}</span>
-                        </div>
-                      )}
-                      {professional.email && (
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-5 w-5 text-primary" />
-                          <span>{professional.email}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
 
             <TabsContent value="services">
               <Card>
@@ -493,59 +450,6 @@ export default function ProfessionalProfilePage() {
                       Nenhum serviço oferecido por este profissional.
                     </p>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="experience">
-              <Card>
-                <CardContent className="p-6 space-y-8">
-                  <div>
-                    <h2 className="text-xl font-semibold mb-6">Experiência Profissional</h2>
-                    {professional.experiences && professional.experiences.length > 0 ? (
-                      <div className="space-y-6">
-                        {professional.experiences.map((exp) => (
-                          <div key={exp.id} className="border-l-2 border-primary pl-4">
-                            <div className="font-medium text-lg">{exp.title}</div>
-                            <div className="text-primary">{exp.companyName}</div>
-                            <div className="text-sm text-muted-foreground">
-                              {exp.startDate} - {exp.endDate || "Presente"}
-                            </div>
-                            {exp.description && (
-                              <p className="text-sm text-muted-foreground mt-1">
-                                {exp.description}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground italic">
-                        Nenhuma experiência profissional listada.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <h2 className="text-xl font-semibold mb-6">Formação Acadêmica</h2>
-                    {professional.educations && professional.educations.length > 0 ? (
-                      <div className="space-y-6">
-                        {professional.educations.map((edu) => (
-                          <div key={edu.id} className="border-l-2 border-primary pl-4">
-                            <div className="font-medium text-lg">{edu.degree}</div>
-                            <div className="text-primary">{edu.institutionName}</div>
-                            {edu.endDate && (
-                              <div className="text-sm text-muted-foreground">{edu.endDate}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground italic">
-                        Nenhuma formação acadêmica listada.
-                      </p>
-                    )}
-                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -763,6 +667,102 @@ export default function ProfessionalProfilePage() {
                   </Card>
                 )}
               </div>
+            </TabsContent>
+
+            <TabsContent value="about">
+              <Card>
+                <CardContent className="p-6 space-y-6">
+                  <div>
+                    <h2 className="text-xl font-semibold mb-4">Sobre</h2>
+                    {professional.bio ? (
+                      <p className="text-muted-foreground whitespace-pre-wrap">
+                        {professional.bio}
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground italic">
+                        Nenhuma biografia fornecida.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Informações de Contato</h3>
+                    <div className="space-y-3">
+                      {professional.address && (
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-5 w-5 text-primary" />
+                          <span>{professional.address}</span>
+                        </div>
+                      )}
+                      {professional.phone && (
+                        <div className="flex items-center gap-2">
+                          <Phone className="h-5 w-5 text-primary" />
+                          <span>{professional.phone}</span>
+                        </div>
+                      )}
+                      {professional.email && (
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-5 w-5 text-primary" />
+                          <span>{professional.email}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="experience">
+              <Card>
+                <CardContent className="p-6 space-y-8">
+                  <div>
+                    <h2 className="text-xl font-semibold mb-6">Experiência Profissional</h2>
+                    {professional.experiences && professional.experiences.length > 0 ? (
+                      <div className="space-y-6">
+                        {professional.experiences.map((exp) => (
+                          <div key={exp.id} className="border-l-2 border-primary pl-4">
+                            <div className="font-medium text-lg">{exp.title}</div>
+                            <div className="text-primary">{exp.companyName}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {exp.startDate} - {exp.endDate || "Presente"}
+                            </div>
+                            {exp.description && (
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {exp.description}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground italic">
+                        Nenhuma experiência profissional listada.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-6">Formação Acadêmica</h2>
+                    {professional.educations && professional.educations.length > 0 ? (
+                      <div className="space-y-6">
+                        {professional.educations.map((edu) => (
+                          <div key={edu.id} className="border-l-2 border-primary pl-4">
+                            <div className="font-medium text-lg">{edu.degree}</div>
+                            <div className="text-primary">{edu.institutionName}</div>
+                            {edu.endDate && (
+                              <div className="text-sm text-muted-foreground">{edu.endDate}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground italic">
+                        Nenhuma formação acadêmica listada.
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="reviews">

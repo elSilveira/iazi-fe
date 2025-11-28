@@ -708,6 +708,38 @@ export const fetchCompanyDetails = async (companyId: string) => {
   return response.data;
 };
 
+// Fetch the current user's company (if they own one)
+export const fetchMyCompany = async (userId?: string) => {
+  try {
+    // Try to fetch companies and filter by current user
+    // The API returns companies with ownerId, so we can filter client-side
+    const response = await apiClient.get("/companies", { params: { limit: 100 } });
+    const companies = response.data?.data || response.data || [];
+    
+    // Use provided userId or get from localStorage
+    let ownerId = userId;
+    if (!ownerId) {
+      const storedUser = localStorage.getItem("user");
+      if (storedUser) {
+        const user = JSON.parse(storedUser);
+        ownerId = user.id;
+      }
+    }
+    
+    if (ownerId) {
+      const userCompany = companies.find((c: { ownerId: string }) => c.ownerId === ownerId);
+      if (userCompany) {
+        return userCompany;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.log("Error fetching company:", error);
+    return null;
+  }
+};
+
 export const registerCompany = async (companyData: Record<string, unknown>) => {
   const response = await apiClient.post("/companies", companyData);
   return response.data;

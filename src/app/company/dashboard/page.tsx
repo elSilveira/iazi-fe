@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { CompanyLayout } from "@/components/company/CompanyLayout";
@@ -19,7 +19,8 @@ export default function CompanyDashboardPage() {
   const { user } = useAuth();
   const companyId = user?.companyId;
 
-  const [stats, setStats] = useState<CompanyDashboardStatsData | null>(null);
+  console.log("CompanyDashboardPage - user:", user);
+  console.log("CompanyDashboardPage - companyId:", companyId);
 
   // Fetch company details
   const { data: company, isLoading: isLoadingCompany, error: companyError } = useQuery({
@@ -29,70 +30,63 @@ export default function CompanyDashboardPage() {
   });
 
   // Fetch company appointments
-  const { data: appointments = [], isLoading: isLoadingAppointments } = useQuery<CompanyAppointment[]>({
+  const { data: appointmentsData, isLoading: isLoadingAppointments } = useQuery<CompanyAppointment[]>({
     queryKey: ["companyAppointments", companyId],
     queryFn: () => fetchCompanyAppointments(companyId!, { include: "user,service,professional" }),
     enabled: !!companyId,
   });
 
   // Fetch company services
-  const { data: services = [], isLoading: isLoadingServices } = useQuery({
+  const { data: servicesData, isLoading: isLoadingServices } = useQuery({
     queryKey: ["companyServices", companyId],
     queryFn: () => fetchCompanyServices(companyId!),
     enabled: !!companyId,
   });
 
-  // Calculate stats from fetched data
-  useEffect(() => {
-    if (appointments) {
-      const today = new Date().toDateString();
-      const currentMonth = new Date().getMonth();
+  // Memoize arrays to prevent unnecessary re-renders
+  const appointments = useMemo(() => appointmentsData || [], [appointmentsData]);
+  const services = useMemo(() => servicesData || [], [servicesData]);
 
-      const appointmentsToday = appointments.filter(
-        (apt) => new Date(apt.startTime).toDateString() === today
-      ).length;
+  // Calculate stats from fetched data using useMemo instead of useEffect + setState
+  const stats = useMemo<CompanyDashboardStatsData | null>(() => {
+    if (!appointments.length && !company) return null;
+    
+    const today = new Date().toDateString();
+    const currentMonth = new Date().getMonth();
 
-      const monthlyRevenue = appointments.reduce((sum, apt: any) => {
-        const apptMonth = new Date(apt.startTime).getMonth();
-        const price = apt.service?.price || apt.price || 0;
-        return apptMonth === currentMonth ? sum + price : sum;
-      }, 0);
+    const appointmentsToday = appointments.filter(
+      (apt) => new Date(apt.startTime).toDateString() === today
+    ).length;
 
-      const clientsThisMonth = new Set(
-        appointments
-          .filter((apt) => new Date(apt.startTime).getMonth() === currentMonth)
-          .map((apt: any) => apt.userId || apt.user?.id)
-      ).size;
+    const monthlyRevenue = appointments.reduce((sum, apt: CompanyAppointment & { price?: number }) => {
+      const apptMonth = new Date(apt.startTime).getMonth();
+      const price = apt.service?.price || apt.price || 0;
+      return apptMonth === currentMonth ? sum + price : sum;
+    }, 0);
 
-      setStats({
-        appointmentsToday,
-        monthlyRevenue,
-        clientsThisMonth,
-        averageRating: company?.averageRating || 0,
-      });
-    }
+    const clientsThisMonth = new Set(
+      appointments
+        .filter((apt) => new Date(apt.startTime).getMonth() === currentMonth)
+        .map((apt: CompanyAppointment & { userId?: string }) => apt.userId || apt.user?.id)
+    ).size;
+
+    return {
+      appointmentsToday,
+      monthlyRevenue,
+      clientsThisMonth,
+      averageRating: company?.averageRating || 0,
+    };
   }, [appointments, company]);
 
-  const upcomingAppointments = appointments
-    .filter((apt) => new Date(apt.startTime) >= new Date() && apt.status !== "CANCELLED")
-    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-    .slice(0, 5);
+  const upcomingAppointments = useMemo(() => 
+    appointments
+      .filter((apt) => new Date(apt.startTime) >= new Date() && apt.status !== "CANCELLED")
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      .slice(0, 5),
+    [appointments]
+  );
 
   const isLoading = isLoadingCompany || isLoadingAppointments || isLoadingServices;
-
-  if (!companyId) {
-    return (
-      <CompanyLayout>
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Acesso Negado</AlertTitle>
-          <AlertDescription>
-            Você não possui uma empresa cadastrada. Cadastre sua empresa para acessar este painel.
-          </AlertDescription>
-        </Alert>
-      </CompanyLayout>
-    );
-  }
 
   return (
     <CompanyLayout>

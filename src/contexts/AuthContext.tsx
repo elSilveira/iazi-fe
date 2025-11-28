@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import apiClient from "@/lib/api";
+import apiClient, { fetchMyCompany } from "@/lib/api";
 
 type UserRole = "admin" | "company" | "professional" | "user";
 
@@ -205,22 +205,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUser = useCallback(async (): Promise<void> => {
     try {
+      console.log("Refreshing user data...");
       const response = await apiClient.get("/auth/me");
       const userPayload = response.data;
+      console.log("Refresh user response:", userPayload);
       
       if (userPayload) {
+        // Check for company in nested structures (API may return company object or just companyId)
+        let companyId = userPayload.companyId 
+          ?? userPayload.company?.id 
+          ?? userPayload.ownedCompany?.id 
+          ?? null;
+        
+        // If no companyId from /auth/me, try fetching from companies list
+        if (!companyId) {
+          console.log("No companyId in /auth/me response, trying to find company by ownerId...");
+          try {
+            const companyData = await fetchMyCompany(userPayload.id);
+            if (companyData?.id) {
+              companyId = companyData.id;
+              console.log("Found company via ownerId:", companyId);
+            }
+          } catch (err) {
+            console.log("Could not fetch company:", err);
+          }
+        }
+        
+        // Check for professional in nested structures
+        const professionalId = userPayload.professionalId 
+          ?? userPayload.professional?.id 
+          ?? null;
+        
         const refreshedUser: User = {
           id: userPayload.id,
           name: userPayload.name,
           email: userPayload.email,
-          avatar: userPayload.avatar ?? undefined,
-          profilePicture: userPayload.profilePicture ?? undefined,
+          avatar: userPayload.avatar ?? userPayload.profilePicture ?? undefined,
+          profilePicture: userPayload.profilePicture ?? userPayload.avatar ?? undefined,
           phone: userPayload.phone ?? undefined,
           role: typeof userPayload.role === "string" ? userPayload.role.toLowerCase() as UserRole : undefined,
-          professionalId: userPayload.professionalId ?? null,
-          companyId: userPayload.companyId ?? null,
-          isProfessional: userPayload.isProfessional ?? (userPayload.role === "PROFESSIONAL" || userPayload.role === "professional"),
-          hasCompany: userPayload.hasCompany ?? !!userPayload.companyId,
+          professionalId,
+          companyId,
+          isProfessional: userPayload.isProfessional ?? !!professionalId ?? (userPayload.role === "PROFESSIONAL" || userPayload.role === "professional"),
+          hasCompany: userPayload.hasCompany ?? !!companyId,
           isAdmin: userPayload.isAdmin ?? (userPayload.role === "ADMIN" || userPayload.role === "admin"),
           admin: userPayload.admin ?? false,
         };
@@ -238,6 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             : !!refreshedUser.companyId,
         };
         
+        console.log("Updated user with flags:", userWithFlags);
         localStorage.setItem(USER_KEY, JSON.stringify(userWithFlags));
         setUser(userWithFlags);
       }

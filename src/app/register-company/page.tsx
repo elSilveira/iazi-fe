@@ -27,12 +27,18 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Building2,
   Phone,
   Mail,
-  Globe,
   MapPin,
   FileText,
   Loader2,
@@ -43,33 +49,88 @@ import {
   Check,
   Search,
   X,
+  Calendar,
+  ImageIcon,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { registerCompany, fetchCategories } from "@/lib/api";
 
 interface Category {
-  id: string;
+  id: number | string;
   name: string;
+  icon?: string;
   description?: string;
 }
 
+// Brazilian states
+const BRAZILIAN_STATES = [
+  { code: "AC", name: "Acre" },
+  { code: "AL", name: "Alagoas" },
+  { code: "AP", name: "Amapá" },
+  { code: "AM", name: "Amazonas" },
+  { code: "BA", name: "Bahia" },
+  { code: "CE", name: "Ceará" },
+  { code: "DF", name: "Distrito Federal" },
+  { code: "ES", name: "Espírito Santo" },
+  { code: "GO", name: "Goiás" },
+  { code: "MA", name: "Maranhão" },
+  { code: "MT", name: "Mato Grosso" },
+  { code: "MS", name: "Mato Grosso do Sul" },
+  { code: "MG", name: "Minas Gerais" },
+  { code: "PA", name: "Pará" },
+  { code: "PB", name: "Paraíba" },
+  { code: "PR", name: "Paraná" },
+  { code: "PE", name: "Pernambuco" },
+  { code: "PI", name: "Piauí" },
+  { code: "RJ", name: "Rio de Janeiro" },
+  { code: "RN", name: "Rio Grande do Norte" },
+  { code: "RS", name: "Rio Grande do Sul" },
+  { code: "RO", name: "Rondônia" },
+  { code: "RR", name: "Roraima" },
+  { code: "SC", name: "Santa Catarina" },
+  { code: "SP", name: "São Paulo" },
+  { code: "SE", name: "Sergipe" },
+  { code: "TO", name: "Tocantins" },
+];
+
+// Working hours schema for each day
+const dayScheduleSchema = z.object({
+  open: z.string().nullable(),
+  close: z.string().nullable(),
+  isOpen: z.boolean(),
+});
+
+const workingHoursSchema = z.object({
+  monday: dayScheduleSchema,
+  tuesday: dayScheduleSchema,
+  wednesday: dayScheduleSchema,
+  thursday: dayScheduleSchema,
+  friday: dayScheduleSchema,
+  saturday: dayScheduleSchema,
+  sunday: dayScheduleSchema,
+});
+
 const companySchema = z.object({
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  cnpj: z.string().length(14, "CNPJ deve ter 14 dígitos").regex(/^\d+$/, "CNPJ deve conter apenas números"),
-  description: z.string().optional(),
-  email: z.string().email("Email inválido"),
-  phone: z.string().min(10, "Telefone deve ter pelo menos 10 dígitos"),
-  website: z.string().url("URL inválida").optional().or(z.literal("")),
+  name: z.string().min(1, "Nome da empresa é obrigatório"),
+  description: z.string().min(1, "Descrição da empresa é obrigatória"),
+  logo: z.string().url("URL inválida").optional().or(z.literal("")),
+  coverImage: z.string().url("URL inválida").optional().or(z.literal("")),
+  yearEstablished: z.string().regex(/^\d{4}$/, "Ano deve ter 4 dígitos").optional().or(z.literal("")),
+  phone: z.string().optional().or(z.literal("")),
+  email: z.string().email("Email inválido").optional().or(z.literal("")),
   categories: z.array(z.string()).min(1, "Selecione pelo menos uma categoria"),
+  workingHours: workingHoursSchema.optional(),
   address: z.object({
-    street: z.string().min(5, "Endereço é obrigatório"),
+    street: z.string().min(1, "Logradouro é obrigatório"),
     number: z.string().min(1, "Número é obrigatório"),
     complement: z.string().optional(),
-    neighborhood: z.string().min(2, "Bairro é obrigatório"),
-    city: z.string().min(2, "Cidade é obrigatória"),
-    state: z.string().length(2, "Estado deve ter 2 caracteres"),
-    zipCode: z.string().regex(/^\d{5}-\d{3}$/, "CEP deve estar no formato 00000-000"),
+    neighborhood: z.string().min(1, "Bairro é obrigatório"),
+    city: z.string().min(1, "Cidade é obrigatória"),
+    state: z.string().length(2, "Estado deve ter 2 caracteres (UF)"),
+    zipCode: z.string().regex(/^\d{5}-?\d{3}$/, "CEP inválido"),
   }),
 });
 
@@ -88,23 +149,37 @@ export default function RegisterCompanyPage() {
     queryFn: fetchCategories,
   });
   
-  const categories: Category[] = categoriesData || [];
+  // Extract categories array from API response (may come as { value: [...] } or direct array)
+  const categoriesRaw = categoriesData?.value || categoriesData?.data || categoriesData || [];
+  const categories: Category[] = Array.isArray(categoriesRaw) ? categoriesRaw : [];
   
   // Filter categories based on search
   const filteredCategories = categories.filter((cat) =>
     cat.name.toLowerCase().includes(categorySearch.toLowerCase())
   );
 
+  const defaultWorkingHours = {
+    monday: { open: "09:00", close: "18:00", isOpen: true },
+    tuesday: { open: "09:00", close: "18:00", isOpen: true },
+    wednesday: { open: "09:00", close: "18:00", isOpen: true },
+    thursday: { open: "09:00", close: "18:00", isOpen: true },
+    friday: { open: "09:00", close: "18:00", isOpen: true },
+    saturday: { open: "09:00", close: "13:00", isOpen: true },
+    sunday: { open: null, close: null, isOpen: false },
+  };
+
   const form = useForm<CompanyFormData>({
     resolver: zodResolver(companySchema),
     defaultValues: {
       name: "",
-      cnpj: "",
       description: "",
-      email: user?.email || "",
+      logo: "",
+      coverImage: "",
+      yearEstablished: "",
       phone: "",
-      website: "",
+      email: user?.email || "",
       categories: [],
+      workingHours: defaultWorkingHours,
       address: {
         street: "",
         number: "",
@@ -126,10 +201,38 @@ export default function RegisterCompanyPage() {
 
   const registerMutation = useMutation({
     mutationFn: registerCompany,
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       toast.success("Empresa registrada com sucesso!");
+      console.log("Company registered:", data);
+      
+      // Get the company ID from response
+      const companyId = data?.id || data?.company?.id;
+      
+      if (companyId) {
+        console.log("Company ID from response:", companyId);
+        
+        // Update user in localStorage immediately
+        const currentUser = localStorage.getItem("user");
+        if (currentUser) {
+          try {
+            const userData = JSON.parse(currentUser);
+            userData.companyId = companyId;
+            userData.hasCompany = true;
+            localStorage.setItem("user", JSON.stringify(userData));
+            console.log("Updated user in localStorage with companyId:", companyId);
+          } catch (e) {
+            console.error("Failed to update user in localStorage:", e);
+          }
+        }
+      }
+      
+      // Refresh user data from API (this will also update state)
       await refreshUser();
-      router.push("/company/dashboard");
+      
+      // Small delay to ensure state is propagated before navigation
+      setTimeout(() => {
+        router.push("/company/dashboard");
+      }, 100);
     },
     onError: (error: Error) => {
       toast.error(error.message || "Erro ao registrar empresa");
@@ -137,13 +240,35 @@ export default function RegisterCompanyPage() {
   });
 
   const onSubmit = (data: CompanyFormData) => {
-    registerMutation.mutate(data);
+    // Transform categories from IDs to names for API
+    const categoryNames = data.categories
+      .map((catId) => categories.find((c) => String(c.id) === catId)?.name)
+      .filter((name): name is string => !!name);
+
+    // Build the payload matching API requirements
+    const payload: Record<string, unknown> = {
+      name: data.name,
+      description: data.description,
+      categories: categoryNames,
+      address: data.address,
+    };
+
+    // Add optional fields only if they have values
+    if (data.logo) payload.logo = data.logo;
+    if (data.coverImage) payload.coverImage = data.coverImage;
+    if (data.yearEstablished) payload.yearEstablished = data.yearEstablished;
+    if (data.phone) payload.phone = data.phone;
+    if (data.email) payload.email = data.email;
+    // Backend expects workingHours as JSON string
+    if (data.workingHours) payload.workingHours = JSON.stringify(data.workingHours);
+
+    registerMutation.mutate(payload);
   };
 
   const handleNextStep = async () => {
     // Validate step 1 fields before proceeding
     if (step === 1) {
-      const fieldsToValidate: (keyof CompanyFormData)[] = ["name", "cnpj", "email", "phone"];
+      const fieldsToValidate: (keyof CompanyFormData)[] = ["name", "description", "categories"];
       const isValid = await form.trigger(fieldsToValidate);
       
       if (isValid) {
@@ -154,20 +279,14 @@ export default function RegisterCompanyPage() {
         const errorMessages: string[] = [];
         
         if (errors.name) errorMessages.push("Nome da empresa");
-        if (errors.cnpj) errorMessages.push("CNPJ");
-        if (errors.email) errorMessages.push("Email");
-        if (errors.phone) errorMessages.push("Telefone");
+        if (errors.description) errorMessages.push("Descrição");
+        if (errors.categories) errorMessages.push("Categorias");
         
         if (errorMessages.length > 0) {
           toast.error(`Corrija os campos: ${errorMessages.join(", ")}`);
         }
       }
     }
-  };
-
-  const formatCNPJ = (value: string) => {
-    const digits = value.replace(/\D/g, "").slice(0, 14);
-    return digits;
   };
 
   const formatPhone = (value: string) => {
@@ -182,6 +301,42 @@ export default function RegisterCompanyPage() {
       return `${digits.slice(0, 5)}-${digits.slice(5)}`;
     }
     return digits;
+  };
+
+  // CEP lookup state
+  const [isLoadingCep, setIsLoadingCep] = useState(false);
+
+  // Lookup address by CEP using ViaCEP API
+  const lookupCep = async (cep: string) => {
+    const cleanCep = cep.replace(/\D/g, "");
+    if (cleanCep.length !== 8) return;
+
+    setIsLoadingCep(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await response.json();
+      
+      if (data.erro) {
+        toast.error("CEP não encontrado");
+        return;
+      }
+
+      // Auto-fill address fields
+      form.setValue("address.street", data.logradouro || "", { shouldValidate: true });
+      form.setValue("address.neighborhood", data.bairro || "", { shouldValidate: true });
+      form.setValue("address.city", data.localidade || "", { shouldValidate: true });
+      form.setValue("address.state", data.uf || "", { shouldValidate: true });
+      
+      if (data.complemento) {
+        form.setValue("address.complement", data.complemento, { shouldValidate: true });
+      }
+
+      toast.success("Endereço preenchido automaticamente");
+    } catch {
+      toast.error("Erro ao buscar CEP");
+    } finally {
+      setIsLoadingCep(false);
+    }
   };
 
   return (
@@ -234,123 +389,34 @@ export default function RegisterCompanyPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Nome da Empresa *</FormLabel>
-                          <FormControl>
-                            <Input placeholder="Nome fantasia" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="cnpj"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>CNPJ *</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="00000000000000"
-                              {...field}
-                              onChange={(e) =>
-                                field.onChange(formatCNPJ(e.target.value))
-                              }
-                            />
-                          </FormControl>
-                          <FormDescription>Apenas números</FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
+                  {/* Nome da Empresa */}
                   <FormField
                     control={form.control}
-                    name="description"
+                    name="name"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Descrição</FormLabel>
+                        <FormLabel>Nome da Empresa *</FormLabel>
                         <FormControl>
-                          <Textarea
-                            placeholder="Descreva sua empresa..."
-                            className="min-h-24"
-                            {...field}
-                          />
+                          <Input placeholder="Nome fantasia da empresa" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="email"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Email *</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                placeholder="contato@empresa.com"
-                                className="pl-10"
-                                {...field}
-                              />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="phone"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Telefone *</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                placeholder="11999999999"
-                                className="pl-10"
-                                {...field}
-                                onChange={(e) =>
-                                  field.onChange(formatPhone(e.target.value))
-                                }
-                              />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
+                  {/* Descrição */}
                   <FormField
                     control={form.control}
-                    name="website"
+                    name="description"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Website</FormLabel>
+                        <FormLabel>Descrição *</FormLabel>
                         <FormControl>
-                          <div className="relative">
-                            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                              placeholder="https://www.suaempresa.com.br"
-                              className="pl-10"
-                              {...field}
-                            />
-                          </div>
+                          <Textarea
+                            placeholder="Descreva sua empresa, os serviços oferecidos..."
+                            className="min-h-24"
+                            {...field}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -422,7 +488,8 @@ export default function RegisterCompanyPage() {
                                   ) : (
                                     <div className="space-y-1">
                                       {filteredCategories.map((category) => {
-                                        const isSelected = watchedCategories.includes(category.id);
+                                        const categoryIdStr = String(category.id);
+                                        const isSelected = watchedCategories.includes(categoryIdStr);
                                         return (
                                           <div
                                             key={category.id}
@@ -435,9 +502,9 @@ export default function RegisterCompanyPage() {
                                               let newValues: string[];
                                               
                                               if (isSelected) {
-                                                newValues = currentValues.filter((id) => id !== category.id);
+                                                newValues = currentValues.filter((id) => id !== categoryIdStr);
                                               } else {
-                                                newValues = [...currentValues, category.id];
+                                                newValues = [...currentValues, categoryIdStr];
                                               }
                                               
                                               form.setValue("categories", newValues, { 
@@ -471,7 +538,7 @@ export default function RegisterCompanyPage() {
                             {watchedCategories.length > 0 && (
                               <div className="flex flex-wrap gap-2 mt-3">
                                 {watchedCategories.map((categoryId) => {
-                                  const category = categories.find((c) => c.id === categoryId);
+                                  const category = categories.find((c) => String(c.id) === categoryId);
                                   if (!category) return null;
                                   return (
                                     <Badge
@@ -485,7 +552,7 @@ export default function RegisterCompanyPage() {
                                         onClick={() => {
                                           const newValues = watchedCategories.filter((id) => id !== categoryId);
                                           form.setValue("categories", newValues, { 
-                                            shouldValidate: false,
+                                            shouldValidate: true,
                                             shouldDirty: true,
                                             shouldTouch: true 
                                           });
@@ -505,6 +572,226 @@ export default function RegisterCompanyPage() {
                       </FormItem>
                     )}
                   />
+
+                  {/* Optional Fields Section */}
+                  <div className="border-t pt-6 mt-6">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-4">
+                      Informações Opcionais
+                    </h3>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {/* Email */}
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email de Contato</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="contato@empresa.com"
+                                  className="pl-10"
+                                  {...field}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {/* Phone */}
+                      <FormField
+                        control={form.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Telefone</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="(11) 99999-9999"
+                                  className="pl-10"
+                                  {...field}
+                                  onChange={(e) =>
+                                    field.onChange(formatPhone(e.target.value))
+                                  }
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-3 mt-4">
+                      {/* Year Established */}
+                      <FormField
+                        control={form.control}
+                        name="yearEstablished"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Ano de Fundação</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="2020"
+                                  maxLength={4}
+                                  className="pl-10"
+                                  {...field}
+                                  onChange={(e) => {
+                                    const value = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                    field.onChange(value);
+                                  }}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {/* Logo URL */}
+                      <FormField
+                        control={form.control}
+                        name="logo"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>URL do Logo</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="https://..."
+                                  className="pl-10"
+                                  {...field}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {/* Cover Image URL */}
+                      <FormField
+                        control={form.control}
+                        name="coverImage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>URL da Capa</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="https://..."
+                                  className="pl-10"
+                                  {...field}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {/* Working Hours */}
+                    <div className="mt-6">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <h4 className="text-sm font-medium">Horário de Funcionamento</h4>
+                      </div>
+                      <div className="space-y-3">
+                        {(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const).map((day) => {
+                          const dayNames: Record<string, string> = {
+                            monday: "Segunda-feira",
+                            tuesday: "Terça-feira",
+                            wednesday: "Quarta-feira",
+                            thursday: "Quinta-feira",
+                            friday: "Sexta-feira",
+                            saturday: "Sábado",
+                            sunday: "Domingo",
+                          };
+                          const watchedDay = form.watch(`workingHours.${day}`);
+                          
+                          return (
+                            <div key={day} className="flex items-center gap-4 py-2 border-b last:border-b-0">
+                              <div className="w-32 text-sm font-medium">{dayNames[day]}</div>
+                              <FormField
+                                control={form.control}
+                                name={`workingHours.${day}.isOpen`}
+                                render={({ field }) => (
+                                  <FormItem className="flex items-center gap-2 space-y-0">
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value}
+                                        onCheckedChange={(checked) => {
+                                          field.onChange(checked);
+                                          if (!checked) {
+                                            form.setValue(`workingHours.${day}.open`, null);
+                                            form.setValue(`workingHours.${day}.close`, null);
+                                          } else {
+                                            form.setValue(`workingHours.${day}.open`, "09:00");
+                                            form.setValue(`workingHours.${day}.close`, "18:00");
+                                          }
+                                        }}
+                                      />
+                                    </FormControl>
+                                    <span className="text-sm text-muted-foreground w-16">
+                                      {field.value ? "Aberto" : "Fechado"}
+                                    </span>
+                                  </FormItem>
+                                )}
+                              />
+                              {watchedDay?.isOpen && (
+                                <>
+                                  <FormField
+                                    control={form.control}
+                                    name={`workingHours.${day}.open`}
+                                    render={({ field }) => (
+                                      <FormItem className="flex items-center gap-2 space-y-0">
+                                        <FormControl>
+                                          <Input
+                                            type="time"
+                                            className="w-28"
+                                            value={field.value || ""}
+                                            onChange={(e) => field.onChange(e.target.value)}
+                                          />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <span className="text-sm text-muted-foreground">às</span>
+                                  <FormField
+                                    control={form.control}
+                                    name={`workingHours.${day}.close`}
+                                    render={({ field }) => (
+                                      <FormItem className="flex items-center gap-2 space-y-0">
+                                        <FormControl>
+                                          <Input
+                                            type="time"
+                                            className="w-28"
+                                            value={field.value || ""}
+                                            onChange={(e) => field.onChange(e.target.value)}
+                                          />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="flex justify-end pt-4">
                     <Button 
@@ -530,7 +817,7 @@ export default function RegisterCompanyPage() {
                     Endereço
                   </CardTitle>
                   <CardDescription>
-                    Informe o endereço da empresa
+                    Informe o endereço da empresa. Digite o CEP para preencher automaticamente.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -540,16 +827,39 @@ export default function RegisterCompanyPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>CEP *</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="00000-000"
-                            className="max-w-[200px]"
-                            {...field}
-                            onChange={(e) =>
-                              field.onChange(formatZipCode(e.target.value))
-                            }
-                          />
-                        </FormControl>
+                        <div className="flex gap-2">
+                          <FormControl>
+                            <Input
+                              placeholder="00000-000"
+                              className="max-w-[200px]"
+                              {...field}
+                              onChange={(e) => {
+                                const formatted = formatZipCode(e.target.value);
+                                field.onChange(formatted);
+                                // Auto-lookup when CEP is complete
+                                if (formatted.replace(/\D/g, "").length === 8) {
+                                  lookupCep(formatted);
+                                }
+                              }}
+                            />
+                          </FormControl>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => lookupCep(field.value)}
+                            disabled={isLoadingCep || field.value.replace(/\D/g, "").length !== 8}
+                          >
+                            {isLoadingCep ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Search className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                        <FormDescription>
+                          Digite o CEP para buscar o endereço automaticamente
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -636,17 +946,23 @@ export default function RegisterCompanyPage() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Estado *</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="SP"
-                              maxLength={2}
-                              className="uppercase"
-                              {...field}
-                              onChange={(e) =>
-                                field.onChange(e.target.value.toUpperCase())
-                              }
-                            />
-                          </FormControl>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {BRAZILIAN_STATES.map((state) => (
+                                <SelectItem key={state.code} value={state.code}>
+                                  {state.code} - {state.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}
