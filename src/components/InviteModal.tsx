@@ -25,15 +25,27 @@ import {
 import { toast } from "sonner";
 import { generateInviteCode, fetchMyInvites } from "@/lib/api";
 
+interface InviteUsage {
+  id: string;
+  email: string;
+  name: string;
+  userId: string;
+  usedAt: string;
+}
+
 interface Invite {
   id: string;
   code: string;
-  used: boolean;
-  usedBy?: {
-    name: string;
-  };
+  type: string;
+  description?: string | null;
+  maxUses: number;
+  usedCount: number;
+  remainingUses: number;
+  isActive: boolean;
+  isExpired: boolean;
   createdAt: string;
   expiresAt?: string;
+  usages: InviteUsage[];
 }
 
 interface InviteModalProps {
@@ -109,8 +121,8 @@ export function InviteModal({ trigger }: InviteModalProps) {
     }
   };
 
-  const activeInvites = invites.filter((i) => !i.used);
-  const usedInvites = invites.filter((i) => i.used);
+  const activeInvites = invites.filter((i) => i.isActive && i.remainingUses > 0);
+  const usedInvites = invites.filter((i) => !i.isActive || i.usedCount > 0);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -221,22 +233,30 @@ export function InviteModal({ trigger }: InviteModalProps) {
           {usedInvites.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-muted-foreground">
-                Códigos Usados ({usedInvites.length})
+                Códigos Usados ({usedInvites.filter(i => i.usedCount > 0).length})
               </h4>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {usedInvites.map((invite) => (
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {usedInvites
+                  .filter(i => i.usedCount > 0)
+                  .map((invite) => (
                   <div
                     key={invite.id}
-                    className="flex items-center justify-between p-2 border rounded-lg opacity-60"
+                    className="p-2 border rounded-lg opacity-60 space-y-1"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm">{invite.code}</span>
-                      <Badge variant="secondary">Usado</Badge>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm">{invite.code}</span>
+                        <Badge variant="secondary">Usado</Badge>
+                      </div>
                     </div>
-                    {invite.usedBy && (
-                      <span className="text-xs text-muted-foreground">
-                        por {invite.usedBy.name}
-                      </span>
+                    {invite.usages && invite.usages.length > 0 && (
+                      <div className="pl-2">
+                        {invite.usages.map((usage) => (
+                          <span key={usage.id} className="text-xs text-muted-foreground block">
+                            por {usage.name} ({usage.email})
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
