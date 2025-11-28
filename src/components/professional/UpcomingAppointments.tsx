@@ -12,10 +12,19 @@ export interface Appointment {
   startTime: string;
   endTime: string;
   status: string;
+  // Single service (legacy)
   service?: {
     id: string;
     name: string;
   };
+  // Multiple services (new API format)
+  services?: Array<{
+    serviceId: string;
+    service: {
+      id: string;
+      name: string;
+    };
+  }>;
   user?: {
     id: string;
     name: string;
@@ -66,6 +75,16 @@ const getStatusBadge = (status: string) => {
   }
 };
 
+// Helper to get service name from appointment
+const getServiceName = (appointment: Appointment): string => {
+  // Try new format first (services array)
+  if (appointment.services && appointment.services.length > 0) {
+    return appointment.services[0].service?.name || "Serviço não disponível";
+  }
+  // Fall back to legacy format
+  return appointment.service?.name || "Serviço não disponível";
+};
+
 export function UpcomingAppointments({ appointments, isLoading }: UpcomingAppointmentsProps) {
   if (isLoading) {
     return (
@@ -96,7 +115,7 @@ export function UpcomingAppointments({ appointments, isLoading }: UpcomingAppoin
             >
               <div>
                 <p className="font-medium">
-                  {appointment.service?.name || "Serviço não disponível"}
+                  {getServiceName(appointment)}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {format(parseISO(appointment.startTime), "eee, dd/MM 'às' HH:mm", {

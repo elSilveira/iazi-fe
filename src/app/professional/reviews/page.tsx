@@ -14,7 +14,8 @@ interface Review {
   id: string;
   rating: number;
   comment?: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
   user?: {
     id: string;
     name: string;
@@ -148,9 +149,9 @@ export default function ProfessionalReviewsPage() {
                               </p>
                               <div className="flex items-center gap-2">
                                 <div className="flex">{renderStars(review.rating)}</div>
-                                {review.createdAt && (
+                                {(review.updatedAt || review.createdAt) && (
                                   <span className="text-xs text-muted-foreground">
-                                    {format(parseISO(review.createdAt), "dd/MM/yyyy", {
+                                    {format(parseISO(review.updatedAt || review.createdAt!), "dd/MM/yyyy", {
                                       locale: ptBR,
                                     })}
                                   </span>
@@ -158,7 +159,7 @@ export default function ProfessionalReviewsPage() {
                               </div>
                             </div>
                           </div>
-                          {review.service && (
+                          {review.service?.name && (
                             <p className="text-xs text-muted-foreground mt-1">
                               Serviço: {review.service.name}
                             </p>

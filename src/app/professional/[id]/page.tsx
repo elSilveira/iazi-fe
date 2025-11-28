@@ -1,21 +1,25 @@
 "use client";
 
-import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useState, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { Navigation } from "@/components/Navigation";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 import {
   User,
   Briefcase,
-  Calendar,
+  Calendar as CalendarIcon,
   Star,
   MapPin,
   Phone,
@@ -25,17 +29,38 @@ import {
   Image,
   FileText,
   Loader2,
+  CheckCircle,
+  ArrowRight,
 } from "lucide-react";
-import { fetchProfessionalDetails, fetchProfessionalReviews } from "@/lib/api";
-import { formatDistanceToNow, parseISO } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { fetchProfessionalDetails, fetchProfessionalReviews, fetchProfessionalAvailability } from "@/lib/api";
+import { formatDistanceToNow, parseISO, isBefore, startOfDay } from "date-fns";
 
 interface Service {
   id: string;
   name: string;
   description?: string;
-  price: number;
-  duration: number;
+  price: number | string;
+  duration: number | string;
+  image?: string;
+}
+
+interface ServiceAvailability {
+  serviceId: string;
+  serviceName: string;
+  duration: string;
+  slots: string[];
+  availableSlots: string[];
+  message?: string;
+}
+
+interface AvailabilityResponse {
+  professionalId: string;
+  date: string;
+  openHours?: {
+    start: string;
+    end: string;
+  } | null;
+  services?: ServiceAvailability[];
 }
 
 interface Professional {
@@ -93,14 +118,29 @@ interface Review {
   professionalResponse?: string;
 }
 
-const formatPrice = (price: number) => {
+const formatPrice = (price: number | string) => {
+  const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+  if (isNaN(numPrice)) return 'R$ 0,00';
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format(price);
+  }).format(numPrice);
 };
 
-const formatDuration = (minutes: number) => {
+const formatDuration = (duration: number | string) => {
+  if (typeof duration === "string") {
+    // Already formatted like "30min" or "2h"
+    const parsed = parseInt(duration, 10);
+    if (!isNaN(parsed) && duration === String(parsed)) {
+      const hours = Math.floor(parsed / 60);
+      const mins = parsed % 60;
+      if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
+      if (hours > 0) return `${hours}h`;
+      return `${mins}min`;
+    }
+    return duration;
+  }
+  const minutes = duration;
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
   if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
@@ -142,8 +182,14 @@ const formatReviewDate = (dateString: string) => {
 
 export default function ProfessionalProfilePage() {
   const params = useParams();
+  const router = useRouter();
   const professionalId = params.id as string;
   const [activeTab, setActiveTab] = useState("about");
+  
+  // Availability tab state
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [selectedService, setSelectedService] = useState<Service | null>(null);
 
   const { data: professional, isLoading, error } = useQuery<Professional>({
     queryKey: ["professional", professionalId],
@@ -158,6 +204,33 @@ export default function ProfessionalProfilePage() {
     enabled: !!professionalId && activeTab === "reviews",
   });
 
+  // Fetch availability when date is selected in availability tab
+  const { data: availabilityData, isLoading: loadingAvailability } = useQuery<AvailabilityResponse>({
+    queryKey: ["professionalAvailability", professionalId, selectedDate],
+    queryFn: () => fetchProfessionalAvailability(professionalId, format(selectedDate!, "yyyy-MM-dd")),
+    enabled: !!professionalId && !!selectedDate && activeTab === "availability",
+  });
+
+  // Get all available slots across all services
+  const allAvailableSlots = useMemo(() => {
+    if (!availabilityData?.services) return [];
+    const slotsSet = new Set<string>();
+    availabilityData.services.forEach(service => {
+      service.availableSlots?.forEach(slot => slotsSet.add(slot));
+    });
+    return Array.from(slotsSet).sort();
+  }, [availabilityData]);
+
+  // Get services available for the selected time slot
+  const servicesForSelectedTime = useMemo(() => {
+    if (!selectedTime || !availabilityData?.services || !professional?.services) return [];
+    
+    return professional.services.filter(service => {
+      const serviceAvailability = availabilityData.services?.find(s => s.serviceId === service.id);
+      return serviceAvailability?.availableSlots?.includes(selectedTime);
+    });
+  }, [selectedTime, availabilityData, professional?.services]);
+
   // Calculate review stats
   const reviewStats = reviews && reviews.length > 0 ? {
     averageRating: reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length,
@@ -171,6 +244,33 @@ export default function ProfessionalProfilePage() {
       };
     }),
   } : null;
+
+  // Disable past dates
+  const disabledDays = (date: Date) => {
+    return isBefore(startOfDay(date), startOfDay(new Date()));
+  };
+
+  // Handle date selection - reset time and service
+  const handleDateSelect = (date: Date | undefined) => {
+    setSelectedDate(date);
+    setSelectedTime(null);
+    setSelectedService(null);
+  };
+
+  // Handle time selection - reset service
+  const handleTimeSelect = (time: string) => {
+    setSelectedTime(time);
+    setSelectedService(null);
+  };
+
+  // Handle booking confirmation
+  const handleBookNow = () => {
+    if (!selectedDate || !selectedTime || !selectedService) return;
+    
+    // Navigate to booking page with pre-filled data
+    const dateStr = format(selectedDate, "yyyy-MM-dd");
+    router.push(`/booking/${professionalId}?serviceId=${selectedService.id}&date=${dateStr}&time=${selectedTime}`);
+  };
 
   if (isLoading) {
     return (
@@ -292,7 +392,7 @@ export default function ProfessionalProfilePage() {
                 Experiência
               </TabsTrigger>
               <TabsTrigger value="availability" className="gap-2">
-                <Calendar className="h-4 w-4" />
+                <CalendarIcon className="h-4 w-4" />
                 Disponibilidade
               </TabsTrigger>
               <TabsTrigger value="reviews" className="gap-2">
@@ -451,22 +551,218 @@ export default function ProfessionalProfilePage() {
             </TabsContent>
 
             <TabsContent value="availability">
-              <Card>
-                <CardContent className="p-6">
-                  <h2 className="text-xl font-semibold mb-6">Verificar Disponibilidade</h2>
-                  <div className="text-center py-12">
-                    <Calendar className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">
-                      Calendário de disponibilidade em desenvolvimento
-                    </p>
-                    <Button className="mt-4" asChild>
-                      <Link href={`/booking?professional=${professional.id}`}>
-                        Agendar Agora
-                      </Link>
-                    </Button>
+              <div className="space-y-6">
+                {/* Step indicators */}
+                <div className="flex items-center justify-center gap-2 mb-4">
+                  <div className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium",
+                    selectedDate ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  )}>
+                    {selectedDate ? <CheckCircle className="h-4 w-4" /> : <span className="w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs">1</span>}
+                    Data
                   </div>
-                </CardContent>
-              </Card>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  <div className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium",
+                    selectedTime ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  )}>
+                    {selectedTime ? <CheckCircle className="h-4 w-4" /> : <span className="w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs">2</span>}
+                    Horário
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  <div className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium",
+                    selectedService ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  )}>
+                    {selectedService ? <CheckCircle className="h-4 w-4" /> : <span className="w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs">3</span>}
+                    Serviço
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Calendar */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <CalendarIcon className="h-5 w-5" />
+                        Selecione a Data
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex justify-center">
+                      <Calendar
+                        mode="single"
+                        selected={selectedDate}
+                        onSelect={handleDateSelect}
+                        disabled={disabledDays}
+                        locale={ptBR}
+                        className="rounded-md border"
+                      />
+                    </CardContent>
+                  </Card>
+
+                  {/* Time Slots */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Clock className="h-5 w-5" />
+                        Horários Disponíveis
+                      </CardTitle>
+                      {selectedDate && (
+                        <CardDescription>
+                          {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                        </CardDescription>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      {!selectedDate ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <CalendarIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                          <p>Selecione uma data para ver os horários</p>
+                        </div>
+                      ) : loadingAvailability ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        </div>
+                      ) : allAvailableSlots.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Clock className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                          <p>Nenhum horário disponível nesta data</p>
+                          <p className="text-sm mt-1">Tente selecionar outra data</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {allAvailableSlots.map((slot) => (
+                            <Button
+                              key={slot}
+                              variant={selectedTime === slot ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => handleTimeSelect(slot)}
+                              className={cn(
+                                "transition-all",
+                                selectedTime === slot && "ring-2 ring-primary ring-offset-2"
+                              )}
+                            >
+                              {slot}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Services for selected time */}
+                {selectedTime && servicesForSelectedTime.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <FileText className="h-5 w-5" />
+                        Serviços Disponíveis às {selectedTime}
+                      </CardTitle>
+                      <CardDescription>
+                        Selecione o serviço que deseja agendar
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {servicesForSelectedTime.map((service) => (
+                          <div
+                            key={service.id}
+                            className={cn(
+                              "p-4 rounded-lg border cursor-pointer transition-all hover:border-primary",
+                              selectedService?.id === service.id
+                                ? "border-primary bg-primary/5 ring-2 ring-primary ring-offset-2"
+                                : "border-border"
+                            )}
+                            onClick={() => setSelectedService(service)}
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <h3 className="font-semibold">{service.name}</h3>
+                              <span className="font-semibold text-primary">
+                                {formatPrice(service.price)}
+                              </span>
+                            </div>
+                            <div className="flex items-center text-sm text-muted-foreground">
+                              <Clock className="h-4 w-4 mr-1" />
+                              {formatDuration(service.duration)}
+                            </div>
+                            {service.description && (
+                              <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                                {service.description}
+                              </p>
+                            )}
+                            {selectedService?.id === service.id && (
+                              <Badge className="mt-2">Selecionado</Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Booking Summary and Action */}
+                {selectedService && selectedDate && selectedTime && (
+                  <Card className="border-primary">
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <CheckCircle className="h-5 w-5 text-primary" />
+                        Resumo do Agendamento
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-2 gap-6">
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={professional.avatar} />
+                              <AvatarFallback>{professional.name?.[0]}</AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">{professional.name}</p>
+                              <p className="text-sm text-muted-foreground">{professional.title}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <CalendarIcon className="h-4 w-4 text-primary" />
+                            <span className="capitalize">
+                              {format(selectedDate, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Clock className="h-4 w-4 text-primary" />
+                            <span>{selectedTime}</span>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-sm text-muted-foreground">Serviço</p>
+                            <p className="font-medium">{selectedService.name}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-muted-foreground">Duração</p>
+                            <p className="font-medium">{formatDuration(selectedService.duration)}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-muted-foreground">Valor</p>
+                            <p className="font-semibold text-lg text-primary">
+                              {formatPrice(selectedService.price)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <Button 
+                        className="w-full mt-6" 
+                        size="lg"
+                        onClick={handleBookNow}
+                      >
+                        Agendar Agora
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             </TabsContent>
 
             <TabsContent value="reviews">

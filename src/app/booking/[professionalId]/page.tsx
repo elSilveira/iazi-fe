@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format, addDays, startOfDay, isBefore, isToday } from "date-fns";
@@ -33,6 +33,7 @@ import {
   fetchProfessionalServices,
   fetchProfessionalAvailability,
   createAppointment,
+  rescheduleAppointmentById,
 } from "@/lib/api";
 
 interface Service {
@@ -46,32 +47,60 @@ interface Service {
 
 interface Professional {
   id: string;
+  name: string;
+  image?: string;
+  coverImage?: string;
   bio?: string;
-  jobTitle?: string;
+  role?: string;
+  phone?: string;
   rating?: number;
-  reviewCount?: number;
+  totalReviews?: number;
+  companyId?: string | null;
+  company?: {
+    id: string;
+    name: string;
+  } | null;
+  // Legacy support
   user?: {
     id: string;
     name: string;
     email: string;
     avatarUrl?: string;
   };
-  company?: {
-    id: string;
-    name: string;
-  };
 }
 
-interface TimeSlot {
+interface ScheduleBlock {
+  id: string;
   startTime: string;
   endTime: string;
-  available: boolean;
+  reason?: string;
+  isAllDay: boolean;
+}
+
+interface ServiceAvailability {
+  serviceId: string;
+  serviceName: string;
+  duration: string;
+  slots: string[];
+  availableSlots: string[];
+  scheduled?: Array<{
+    id: string;
+    startTime: string;
+    endTime: string;
+    status: string;
+  }>;
+  message?: string;
 }
 
 interface AvailabilityResponse {
   professionalId: string;
   date: string;
-  availableSlots: TimeSlot[];
+  openHours?: {
+    start: string;
+    end: string;
+  } | null;
+  scheduleBlocks?: ScheduleBlock[];
+  services?: ServiceAvailability[];
 }
 
 const STEPS = [
@@ -88,12 +117,17 @@ export default function BookingPage() {
 
   const professionalId = params.professionalId as string;
   const preSelectedServiceId = searchParams.get("serviceId");
+  const preSelectedDate = searchParams.get("date");
+  const preSelectedTime = searchParams.get("time");
+  const appointmentId = searchParams.get("appointmentId"); // For rescheduling
+  const isRescheduling = !!appointmentId;
 
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [initialized, setInitialized] = useState(false);
 
   // Fetch professional details
   const { data: professional, isLoading: loadingProfessional } = useQuery<Professional>({
@@ -110,19 +144,45 @@ export default function BookingPage() {
   });
   const services: Service[] = servicesData?.data || servicesData || [];
 
-  // Pre-select service if provided in URL
-  useMemo(() => {
-    if (preSelectedServiceId && services.length > 0 && !selectedService) {
+  // Pre-select service, date, and time if provided in URL
+  useEffect(() => {
+    if (initialized || services.length === 0) return;
+    
+    let hasPreSelection = false;
+    
+    if (preSelectedServiceId) {
       const service = services.find((s) => s.id === preSelectedServiceId);
       if (service) {
         setSelectedService(service);
-        setCurrentStep(2);
+        hasPreSelection = true;
+        
+        // If date is also provided
+        if (preSelectedDate) {
+          const date = new Date(preSelectedDate + 'T12:00:00');
+          if (!isNaN(date.getTime())) {
+            setSelectedDate(date);
+            
+            // If time is also provided, pre-select it but stay on step 2 for user to confirm/change
+            if (preSelectedTime) {
+              setSelectedTime(preSelectedTime);
+            }
+            setCurrentStep(2);
+          } else {
+            setCurrentStep(2);
+          }
+        } else {
+          setCurrentStep(2);
+        }
       }
     }
-  }, [preSelectedServiceId, services, selectedService]);
+    
+    if (hasPreSelection) {
+      setInitialized(true);
+    }
+  }, [preSelectedServiceId, preSelectedDate, preSelectedTime, services, initialized]);
 
   // Fetch availability for selected date
-  const { data: availabilityData, isLoading: loadingAvailability } = useQuery<AvailabilityResponse>({
+  const { data: availabilityData, isLoading: loadingAvailability, error: availabilityError } = useQuery<AvailabilityResponse>({
     queryKey: ["availability", professionalId, selectedDate, selectedService?.id],
     queryFn: () =>
       fetchProfessionalAvailability(
@@ -133,7 +193,96 @@ export default function BookingPage() {
     enabled: !!professionalId && !!selectedDate && !!selectedService,
   });
 
-  const availableSlots = availabilityData?.availableSlots?.filter((slot) => slot.available) || [];
+  // Extract available slots from the new API response format
+  // When rescheduling, include the original time slots as available (they will be freed up)
+  const { availableSlots, unavailableMessage } = useMemo(() => {
+    if (!availabilityData || !selectedService) {
+      return { availableSlots: [], unavailableMessage: null };
+    }
+    
+    // Find the service in the response
+    const serviceData = availabilityData.services?.find(
+      (s) => s.serviceId === selectedService.id
+    );
+    
+    if (!serviceData) {
+      // Service not found in response - may not be available this day
+      return { 
+        availableSlots: [], 
+        unavailableMessage: "Serviço não disponível nesta data." 
+      };
+    }
+    
+    // Check if there's a message (professional doesn't work this day for this service)
+    if (serviceData.message) {
+      return { 
+        availableSlots: [], 
+        unavailableMessage: serviceData.message 
+      };
+    }
+    
+    // Get the available slots
+    let slots = [...(serviceData.availableSlots || [])];
+    
+    // If we're rescheduling (preSelectedTime exists) and we're on the same date,
+    // add slots that are blocked by the current appointment as available (they will be freed up)
+    if (preSelectedTime && preSelectedDate && selectedDate) {
+      const preSelectedDateStr = preSelectedDate;
+      const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
+      
+      if (preSelectedDateStr === selectedDateStr) {
+        // Get all possible slots for this service
+        const allSlots = serviceData.slots || [];
+        
+        // Parse the preSelectedTime to calculate which slots are blocked by the current appointment
+        const [startHour, startMinute] = preSelectedTime.split(':').map(Number);
+        const startTimeMinutes = startHour * 60 + startMinute;
+        
+        // Get service duration in minutes
+        let durationMinutes = 30; // default
+        if (serviceData.duration) {
+          const durationMatch = serviceData.duration.match(/(\d+)/);
+          if (durationMatch) {
+            durationMinutes = parseInt(durationMatch[1], 10);
+            // Check if it's in hours format (e.g., "1h" or "1h30min")
+            if (serviceData.duration.includes('h')) {
+              const hoursMatch = serviceData.duration.match(/(\d+)h/);
+              const minsMatch = serviceData.duration.match(/(\d+)min/);
+              durationMinutes = (hoursMatch ? parseInt(hoursMatch[1], 10) * 60 : 0) + 
+                               (minsMatch ? parseInt(minsMatch[1], 10) : 0);
+              if (durationMinutes === 0) durationMinutes = parseInt(hoursMatch?.[1] || '1', 10) * 60;
+            }
+          }
+        }
+        
+        const endTimeMinutes = startTimeMinutes + durationMinutes;
+        
+        // Find all slots that fall within the current appointment time range
+        // These should be made available since the appointment will be freed
+        allSlots.forEach((slot: string) => {
+          const [slotHour, slotMinute] = slot.split(':').map(Number);
+          const slotMinutes = slotHour * 60 + slotMinute;
+          
+          // If slot is within the current appointment range and not already available
+          if (slotMinutes >= startTimeMinutes && slotMinutes < endTimeMinutes && !slots.includes(slot)) {
+            slots.push(slot);
+          }
+        });
+        
+        // Sort slots chronologically
+        slots.sort((a: string, b: string) => {
+          const [aH, aM] = a.split(':').map(Number);
+          const [bH, bM] = b.split(':').map(Number);
+          return (aH * 60 + aM) - (bH * 60 + bM);
+        });
+      }
+    }
+    
+    return { 
+      availableSlots: slots, 
+      unavailableMessage: null 
+    };
+  }, [availabilityData, selectedService, preSelectedTime, preSelectedDate, selectedDate]);
 
   // Create appointment mutation
   const createMutation = useMutation({
@@ -147,6 +296,19 @@ export default function BookingPage() {
     },
   });
 
+  // Reschedule appointment mutation
+  const rescheduleMutation = useMutation({
+    mutationFn: ({ appointmentId, data }: { appointmentId: string; data: { date: string; time: string; notes?: string } }) => 
+      rescheduleAppointmentById(appointmentId, data),
+    onSuccess: (data) => {
+      toast.success("Agendamento remarcado com sucesso!");
+      router.push(`/bookings?success=${data.appointment?.id || appointmentId}`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Erro ao remarcar agendamento");
+    },
+  });
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
@@ -154,7 +316,23 @@ export default function BookingPage() {
     }).format(price);
   };
 
-  const formatDuration = (minutes: number) => {
+  const formatDuration = (duration: number | string) => {
+    // If duration is already a formatted string like "30min" or "1h30min", return it
+    if (typeof duration === "string") {
+      // If it's just a number as string, parse it
+      const parsed = parseInt(duration, 10);
+      if (!isNaN(parsed) && duration === String(parsed)) {
+        const hours = Math.floor(parsed / 60);
+        const mins = parsed % 60;
+        if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
+        if (hours > 0) return `${hours}h`;
+        return `${mins}min`;
+      }
+      // It's already formatted (e.g., "30min", "1h"), return as-is
+      return duration;
+    }
+    // Handle number type
+    const minutes = duration;
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
@@ -200,16 +378,30 @@ export default function BookingPage() {
       return;
     }
 
-    const startTime = new Date(selectedDate);
-    const [hours, minutes] = selectedTime.split(":");
-    startTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    // Format date as YYYY-MM-DD and time as HH:MM for the API
+    const dateStr = format(selectedDate, "yyyy-MM-dd");
+    const timeStr = selectedTime; // Already in HH:MM format from availableSlots
 
-    createMutation.mutate({
-      serviceId: selectedService.id,
-      professionalId,
-      startTime: startTime.toISOString(),
-      notes: notes || undefined,
-    });
+    // If rescheduling, use the reschedule API
+    if (isRescheduling && appointmentId) {
+      rescheduleMutation.mutate({
+        appointmentId,
+        data: {
+          date: dateStr,
+          time: timeStr,
+          notes: notes || undefined,
+        },
+      });
+    } else {
+      // Create new appointment
+      createMutation.mutate({
+        serviceId: selectedService.id,
+        professionalId,
+        date: dateStr,
+        time: timeStr,
+        notes: notes || undefined,
+      });
+    }
   };
 
   const canProceedToStep3 = selectedService && selectedDate && selectedTime;
@@ -271,18 +463,23 @@ export default function BookingPage() {
           <CardContent className="p-4">
             <div className="flex items-center gap-4">
               <Avatar className="h-14 w-14">
-                <AvatarImage src={professional.user?.avatarUrl} />
-                <AvatarFallback>{getInitials(professional.user?.name)}</AvatarFallback>
+                <AvatarImage src={professional.image || professional.user?.avatarUrl} />
+                <AvatarFallback>{getInitials(professional.name || professional.user?.name)}</AvatarFallback>
               </Avatar>
               <div>
-                <h2 className="font-semibold">{professional.user?.name || "Profissional"}</h2>
-                {professional.jobTitle && (
-                  <p className="text-sm text-muted-foreground">{professional.jobTitle}</p>
+                <h2 className="font-semibold">{professional.name || professional.user?.name}</h2>
+                {professional.bio && (
+                  <p className="text-sm text-muted-foreground line-clamp-1">{professional.bio}</p>
                 )}
                 {professional.rating !== undefined && professional.rating > 0 && (
                   <div className="flex items-center gap-1">
                     <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                    <span className="text-sm">{professional.rating.toFixed(1)}</span>
+                    <span className="text-sm">
+                      {professional.rating.toFixed(1)}
+                      {professional.totalReviews !== undefined && (
+                        <span className="text-muted-foreground"> ({professional.totalReviews} avaliações)</span>
+                      )}
+                    </span>
                   </div>
                 )}
               </div>
@@ -291,13 +488,13 @@ export default function BookingPage() {
         </Card>
 
         {/* Progress Steps */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-center mb-8">
           {STEPS.map((step, index) => (
             <div key={step.id} className="flex items-center">
               <div className="flex flex-col items-center">
                 <div
                   className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center font-medium",
+                    "w-10 h-10 rounded-full flex items-center justify-center font-medium transition-colors",
                     currentStep > step.id
                       ? "bg-primary text-primary-foreground"
                       : currentStep === step.id
@@ -307,12 +504,13 @@ export default function BookingPage() {
                 >
                   {currentStep > step.id ? <Check className="h-5 w-5" /> : step.id}
                 </div>
-                <span className="text-sm mt-1 font-medium hidden sm:block">{step.title}</span>
+                <span className="text-sm mt-2 font-medium hidden sm:block">{step.title}</span>
+                <span className="text-xs text-muted-foreground hidden md:block">{step.description}</span>
               </div>
               {index < STEPS.length - 1 && (
                 <div
                   className={cn(
-                    "w-16 sm:w-24 h-1 mx-2",
+                    "w-16 sm:w-24 md:w-32 h-2 mx-4 rounded-full transition-colors",
                     currentStep > step.id ? "bg-primary" : "bg-muted"
                   )}
                 />
@@ -406,31 +604,33 @@ export default function BookingPage() {
             </Card>
 
             {/* Calendar */}
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <CalendarIcon className="h-5 w-5" />
                   Selecione a Data
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <Calendar
-                  mode="single"
-                  selected={selectedDate}
-                  onSelect={handleSelectDate}
-                  disabled={disabledDays}
-                  locale={ptBR}
-                  className="rounded-md border"
-                />
+              <CardContent className="flex-1 flex items-center justify-center">
+                <div className="w-full flex justify-center">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={handleSelectDate}
+                    disabled={disabledDays}
+                    locale={ptBR}
+                    className="rounded-md border mx-auto"
+                  />
+                </div>
               </CardContent>
             </Card>
 
             {/* Time Slots */}
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Clock className="h-5 w-5" />
-                  Selecione o Horário
+                  Horários Disponíveis
                 </CardTitle>
                 {selectedDate && (
                   <CardDescription>
@@ -438,38 +638,87 @@ export default function BookingPage() {
                   </CardDescription>
                 )}
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex-1">
                 {!selectedDate ? (
-                  <p className="text-muted-foreground text-center py-8">
-                    Selecione uma data primeiro
-                  </p>
-                ) : loadingAvailability ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  </div>
-                ) : availableSlots.length === 0 ? (
-                  <div className="text-center py-8">
-                    <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-muted-foreground">
-                      Nenhum horário disponível nesta data.
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <CalendarIcon className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                    <p className="text-muted-foreground font-medium">
+                      Selecione uma data
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
+                      Escolha uma data no calendário para ver os horários disponíveis
+                    </p>
+                  </div>
+                ) : loadingAvailability ? (
+                  <div className="flex flex-col items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                    <p className="text-muted-foreground">Carregando horários...</p>
+                  </div>
+                ) : availabilityError ? (
+                  <div className="text-center py-12">
+                    <AlertCircle className="h-12 w-12 text-destructive/50 mx-auto mb-4" />
+                    <p className="text-muted-foreground font-medium">
+                      Erro ao carregar horários
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {(availabilityError as Error).message || "Tente novamente mais tarde."}
+                    </p>
+                  </div>
+                ) : unavailableMessage ? (
+                  <div className="text-center py-12">
+                    <AlertCircle className="h-12 w-12 text-amber-500/50 mx-auto mb-4" />
+                    <p className="text-muted-foreground font-medium">
+                      Indisponível nesta data
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {unavailableMessage}
+                      <br />
+                      Tente selecionar outra data.
+                    </p>
+                  </div>
+                ) : availableSlots.length === 0 ? (
+                  <div className="text-center py-12">
+                    <AlertCircle className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
+                    <p className="text-muted-foreground font-medium">
+                      Nenhum horário disponível
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {availabilityData?.openHours === null 
+                        ? "O profissional ainda não configurou seus horários de trabalho."
+                        : "Todos os horários já estão ocupados nesta data."}
+                      <br />
                       Tente selecionar outra data.
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    {availableSlots.map((slot) => (
-                      <Button
-                        key={slot.startTime}
-                        variant={selectedTime === slot.startTime ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => handleSelectTime(slot.startTime)}
-                        className="w-full"
-                      >
-                        {slot.startTime}
-                      </Button>
-                    ))}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        {availableSlots.length} horário{availableSlots.length !== 1 ? "s" : ""} disponíve{availableSlots.length !== 1 ? "is" : "l"}
+                      </span>
+                      {selectedTime && (
+                        <Badge variant="secondary" className="gap-1">
+                          <Check className="h-3 w-3" />
+                          {selectedTime}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {availableSlots.map((slot) => (
+                        <Button
+                          key={slot}
+                          variant={selectedTime === slot ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => handleSelectTime(slot)}
+                          className={cn(
+                            "w-full transition-all",
+                            selectedTime === slot && "ring-2 ring-primary ring-offset-2"
+                          )}
+                        >
+                          {slot}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -489,15 +738,26 @@ export default function BookingPage() {
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Confirme seu Agendamento</CardTitle>
-                <CardDescription>Revise os detalhes antes de confirmar</CardDescription>
+                <CardTitle>{isRescheduling ? "Confirme a Remarcação" : "Confirme seu Agendamento"}</CardTitle>
+                <CardDescription>
+                  {isRescheduling 
+                    ? "Revise os novos detalhes antes de confirmar a remarcação"
+                    : "Revise os detalhes antes de confirmar"
+                  }
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 {/* Summary */}
                 <div className="space-y-4">
                   <div className="flex justify-between items-center py-3 border-b">
                     <span className="text-muted-foreground">Profissional</span>
-                    <span className="font-medium">{professional.user?.name}</span>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={professional.image || professional.user?.avatarUrl} />
+                        <AvatarFallback>{getInitials(professional.name || professional.user?.name)}</AvatarFallback>
+                      </Avatar>
+                      <span className="font-medium">{professional.name || professional.user?.name}</span>
+                    </div>
                   </div>
                   <div className="flex justify-between items-center py-3 border-b">
                     <span className="text-muted-foreground">Serviço</span>
@@ -566,17 +826,17 @@ export default function BookingPage() {
               <Button
                 className="flex-1"
                 onClick={handleConfirmBooking}
-                disabled={createMutation.isPending || !isAuthenticated}
+                disabled={createMutation.isPending || rescheduleMutation.isPending || !isAuthenticated}
               >
-                {createMutation.isPending ? (
+                {(createMutation.isPending || rescheduleMutation.isPending) ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Confirmando...
+                    {isRescheduling ? "Remarcando..." : "Confirmando..."}
                   </>
                 ) : (
                   <>
                     <Check className="h-4 w-4 mr-2" />
-                    Confirmar Agendamento
+                    {isRescheduling ? "Confirmar Remarcação" : "Confirmar Agendamento"}
                   </>
                 )}
               </Button>

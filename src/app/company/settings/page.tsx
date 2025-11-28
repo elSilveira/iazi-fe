@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { CompanyLayout } from "@/components/company/CompanyLayout";
@@ -58,12 +58,33 @@ interface CompanySettings {
   acceptOnlinePayment: boolean;
   requireDeposit: boolean;
   depositPercentage: number;
-
-  // Business Hours
-  businessHours: {
-    [key: string]: { open: string; close: string; enabled: boolean };
-  };
 }
+
+interface DaySchedule {
+  isOpen: boolean;
+  start: string;
+  end: string;
+}
+
+interface WorkingHours {
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+}
+
+const EMPTY_WORKING_HOURS: WorkingHours = {
+  monday: { isOpen: false, start: "09:00", end: "18:00" },
+  tuesday: { isOpen: false, start: "09:00", end: "18:00" },
+  wednesday: { isOpen: false, start: "09:00", end: "18:00" },
+  thursday: { isOpen: false, start: "09:00", end: "18:00" },
+  friday: { isOpen: false, start: "09:00", end: "18:00" },
+  saturday: { isOpen: false, start: "09:00", end: "14:00" },
+  sunday: { isOpen: false, start: "09:00", end: "14:00" },
+};
 
 const defaultSettings: CompanySettings = {
   slotDuration: 30,
@@ -76,15 +97,6 @@ const defaultSettings: CompanySettings = {
   acceptOnlinePayment: false,
   requireDeposit: false,
   depositPercentage: 20,
-  businessHours: {
-    monday: { open: "09:00", close: "18:00", enabled: true },
-    tuesday: { open: "09:00", close: "18:00", enabled: true },
-    wednesday: { open: "09:00", close: "18:00", enabled: true },
-    thursday: { open: "09:00", close: "18:00", enabled: true },
-    friday: { open: "09:00", close: "18:00", enabled: true },
-    saturday: { open: "09:00", close: "14:00", enabled: true },
-    sunday: { open: "09:00", close: "14:00", enabled: false },
-  },
 };
 
 const dayLabels: { [key: string]: string } = {
@@ -97,30 +109,44 @@ const dayLabels: { [key: string]: string } = {
   sunday: "Domingo",
 };
 
+const DAYS_OF_WEEK: Array<{ key: keyof WorkingHours; label: string }> = [
+  { key: "monday", label: "Segunda-feira" },
+  { key: "tuesday", label: "Terça-feira" },
+  { key: "wednesday", label: "Quarta-feira" },
+  { key: "thursday", label: "Quinta-feira" },
+  { key: "friday", label: "Sexta-feira" },
+  { key: "saturday", label: "Sábado" },
+  { key: "sunday", label: "Domingo" },
+];
+
 export default function CompanySettingsPage() {
   const { user } = useAuth();
   const companyId = user?.companyId;
   const queryClient = useQueryClient();
 
   const [settings, setSettings] = useState<CompanySettings>(defaultSettings);
+  const [workingHours, setWorkingHours] = useState<WorkingHours | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
-  const { isLoading } = useQuery({
+  const { data: companyData, isLoading } = useQuery({
     queryKey: ["companyDetails", companyId],
     queryFn: () => fetchCompanyDetails(companyId!),
     enabled: !!companyId,
-    select: (data) => {
-      // Merge API settings with defaults
-      if (data?.settings) {
-        setSettings({ ...defaultSettings, ...data.settings });
-      }
-      return data;
-    },
   });
 
+  // Initialize state from API data
+  useEffect(() => {
+    if (companyData) {
+      if (companyData.settings) {
+        setSettings({ ...defaultSettings, ...companyData.settings });
+      }
+      setWorkingHours(companyData.workingHours || null);
+    }
+  }, [companyData]);
+
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<CompanySettings>) =>
-      updateCompanyDetails(companyId!, { settings: data }),
+    mutationFn: (data: { settings?: Partial<CompanySettings>; workingHours?: WorkingHours }) =>
+      updateCompanyDetails(companyId!, data),
     onSuccess: () => {
       toast.success("Configurações salvas com sucesso!");
       queryClient.invalidateQueries({ queryKey: ["companyDetails", companyId] });
@@ -139,26 +165,29 @@ export default function CompanySettingsPage() {
     setHasChanges(true);
   };
 
-  const updateBusinessHour = (
-    day: string,
-    field: "open" | "close" | "enabled",
+  const initializeWorkingHours = () => {
+    setWorkingHours(EMPTY_WORKING_HOURS);
+    setHasChanges(true);
+  };
+
+  const updateWorkingHour = (
+    day: keyof WorkingHours,
+    field: "start" | "end" | "isOpen",
     value: string | boolean
   ) => {
-    setSettings((prev) => ({
-      ...prev,
-      businessHours: {
-        ...prev.businessHours,
-        [day]: {
-          ...prev.businessHours[day],
-          [field]: value,
-        },
+    if (!workingHours) return;
+    setWorkingHours({
+      ...workingHours,
+      [day]: {
+        ...workingHours[day],
+        [field]: value,
       },
-    }));
+    });
     setHasChanges(true);
   };
 
   const handleSave = () => {
-    updateMutation.mutate(settings);
+    updateMutation.mutate({ settings, workingHours: workingHours || undefined });
   };
 
   return (
@@ -296,56 +325,76 @@ export default function CompanySettingsPage() {
                   Horário de Funcionamento
                 </CardTitle>
                 <CardDescription>
-                  Defina os horários de operação da empresa
+                  Defina os horários de operação da empresa. Esses horários serão usados como padrão para todos os profissionais.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {Object.entries(settings.businessHours).map(([day, hours]) => (
-                    <div
-                      key={day}
-                      className="flex items-center gap-4 flex-wrap sm:flex-nowrap"
-                    >
-                      <div className="flex items-center gap-2 w-40">
-                        <Switch
-                          checked={hours.enabled}
-                          onCheckedChange={(checked) =>
-                            updateBusinessHour(day, "enabled", checked)
-                          }
-                        />
-                        <span
-                          className={`text-sm ${
-                            !hours.enabled ? "text-muted-foreground" : ""
-                          }`}
-                        >
-                          {dayLabels[day]}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="time"
-                          value={hours.open}
-                          onChange={(e) =>
-                            updateBusinessHour(day, "open", e.target.value)
-                          }
-                          disabled={!hours.enabled}
-                          className="w-32"
-                        />
-                        <span className="text-muted-foreground">às</span>
-                        <Input
-                          type="time"
-                          value={hours.close}
-                          onChange={(e) =>
-                            updateBusinessHour(day, "close", e.target.value)
-                          }
-                          disabled={!hours.enabled}
-                          className="w-32"
-                        />
-                      </div>
+                {!workingHours ? (
+                  <div className="text-center py-8 space-y-4">
+                    <Clock className="h-12 w-12 text-muted-foreground/50 mx-auto" />
+                    <div>
+                      <p className="font-medium">Horários não configurados</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Configure os horários de funcionamento para que seus clientes possam agendar serviços.
+                      </p>
                     </div>
-                  ))}
-                </div>
+                    <Button onClick={initializeWorkingHours}>
+                      <Calendar className="h-4 w-4 mr-2" />
+                      Configurar Horários
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {DAYS_OF_WEEK.map(({ key, label }) => (
+                      <div
+                        key={key}
+                        className="flex items-center gap-4 flex-wrap sm:flex-nowrap p-3 rounded-lg border"
+                      >
+                        <div className="flex items-center gap-2 w-40">
+                          <Switch
+                            checked={workingHours[key].isOpen}
+                            onCheckedChange={(checked) =>
+                              updateWorkingHour(key, "isOpen", checked)
+                            }
+                          />
+                          <span
+                            className={`text-sm ${
+                              !workingHours[key].isOpen ? "text-muted-foreground" : "font-medium"
+                            }`}
+                          >
+                            {label}
+                          </span>
+                        </div>
+
+                        {workingHours[key].isOpen ? (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="time"
+                              value={workingHours[key].start}
+                              onChange={(e) =>
+                                updateWorkingHour(key, "start", e.target.value)
+                              }
+                              className="w-32"
+                            />
+                            <span className="text-muted-foreground">às</span>
+                            <Input
+                              type="time"
+                              value={workingHours[key].end}
+                              onChange={(e) =>
+                                updateWorkingHour(key, "end", e.target.value)
+                              }
+                              className="w-32"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground italic">
+                            Fechado
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

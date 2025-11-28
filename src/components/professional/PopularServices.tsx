@@ -14,14 +14,28 @@ import { Loader2, Star, Briefcase } from "lucide-react";
 export interface PopularService {
   id: string;
   name: string;
-  appointmentCount: number;
-  rating: number;
+  appointmentCount?: number;
+  bookingCount?: number;
+  totalBookings?: number;
+  rating?: number;
+  averageRating?: number;
+  avgRating?: number;
 }
 
 interface PopularServicesProps {
   services: PopularService[];
   isLoading: boolean;
 }
+
+// Helper to extract rating from different possible API formats
+const getRating = (service: PopularService): number => {
+  return service.rating ?? service.averageRating ?? service.avgRating ?? 0;
+};
+
+// Helper to extract appointment count from different possible API formats
+const getAppointmentCount = (service: PopularService): number => {
+  return service.appointmentCount ?? service.bookingCount ?? service.totalBookings ?? 0;
+};
 
 export function PopularServices({ services, isLoading }: PopularServicesProps) {
   if (isLoading) {
@@ -57,11 +71,11 @@ export function PopularServices({ services, isLoading }: PopularServicesProps) {
             {services.map((service) => (
               <TableRow key={service.id}>
                 <TableCell className="font-medium">{service.name}</TableCell>
-                <TableCell className="text-center">{service.appointmentCount}</TableCell>
+                <TableCell className="text-center">{getAppointmentCount(service)}</TableCell>
                 <TableCell className="text-center">
                   <span className="inline-flex items-center gap-1">
                     <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                    {service.rating.toFixed(1)}
+                    {getRating(service).toFixed(1)}
                   </span>
                 </TableCell>
               </TableRow>

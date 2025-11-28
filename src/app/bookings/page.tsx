@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { fetchAppointments, cancelAppointment } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -11,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,31 +41,59 @@ import Link from "next/link";
 import { format, parseISO, isPast, isFuture, isToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
+interface AppointmentService {
+  appointmentId: string;
+  serviceId: string;
+  service: {
+    id: string;
+    name: string;
+    description?: string;
+    duration: string;
+    price: string;
+    image?: string;
+  };
+}
+
 interface Appointment {
   id: string;
   startTime: string;
   endTime: string;
   status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
   notes?: string;
-  service?: {
-    id: string;
-    name: string;
-    price: number;
-    duration: number;
-  };
-  professional?: {
-    id: string;
-    user?: {
-      name: string;
-      avatar?: string;
-      phone?: string;
+  reviewSummary?: {
+    serviceReviews?: Array<{
+      id: string;
+      rating: number;
+      comment?: string;
+    }>;
+    clientReview?: {
+      id: string;
+      rating: number;
+      comment?: string;
     };
   };
+  // Services is an array in the API response
+  services?: AppointmentService[];
+  // Professional data
+  professional?: {
+    id: string;
+    name: string;
+    role?: string;
+    image?: string;
+    phone?: string;
+    company?: {
+      id: string;
+      name: string;
+    } | null;
+  };
+  professionalId?: string;
+  // Company info
   company?: {
     id: string;
     name: string;
     address?: string;
-  };
+  } | null;
+  companyId?: string | null;
 }
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }> = {
@@ -97,10 +127,27 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 function BookingsPageContent() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState("upcoming");
+  const [showSuccessAlert, setShowSuccessAlert] = useState(false);
+  
+  // Check for success parameter and invalidate cache
+  const successId = searchParams.get("success");
+  
+  useEffect(() => {
+    if (successId) {
+      // Show success message
+      setShowSuccessAlert(true);
+      // Invalidate cache to refresh appointments list
+      queryClient.invalidateQueries({ queryKey: ["userAppointments"] });
+      // Hide alert after 5 seconds
+      const timer = setTimeout(() => setShowSuccessAlert(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successId, queryClient]);
 
   // Fetch user appointments
-  const { data: appointments, isLoading } = useQuery<Appointment[]>({
+  const { data: appointments, isLoading, refetch } = useQuery<Appointment[]>({
     queryKey: ["userAppointments", user?.id],
     queryFn: () => fetchAppointments({ userId: user?.id }),
     enabled: !!user?.id,
@@ -159,6 +206,30 @@ function BookingsPageContent() {
     const isUpcoming = isFuture(aptDate) && !["CANCELLED", "COMPLETED", "NO_SHOW"].includes(apt.status);
     const isCompleted = apt.status === "COMPLETED";
 
+    // Extract service data from the services array (first service)
+    const firstService = apt.services?.[0]?.service;
+    const serviceName = firstService?.name || "Serviço";
+    const servicePrice = firstService?.price;
+    const serviceDuration = firstService?.duration;
+
+    // Extract professional data
+    const professionalName = apt.professional?.name || "Profissional";
+    const professionalPhone = apt.professional?.phone;
+    const professionalId = apt.professional?.id || apt.professionalId;
+    const professionalImage = apt.professional?.image;
+
+    // Extract company data
+    const companyName = apt.professional?.company?.name || apt.company?.name;
+    const companyAddress = apt.company?.address;
+
+    // Format price - handle string price
+    const formatServicePrice = (price: string | undefined) => {
+      if (!price) return null;
+      const numPrice = parseFloat(price);
+      if (isNaN(numPrice)) return null;
+      return `R$ ${numPrice.toFixed(2)}`;
+    };
+
     return (
       <Card key={apt.id} className={`overflow-hidden ${apt.status === "CANCELLED" ? "opacity-60" : ""}`}>
         <div className={`h-1 ${isUpcoming ? "bg-primary" : isCompleted ? "bg-green-500" : "bg-gray-300"}`} />
@@ -169,11 +240,11 @@ function BookingsPageContent() {
               <div className="flex items-start justify-between">
                 <div>
                   <h3 className="font-semibold text-lg">
-                    {apt.service?.name || "Serviço"}
+                    {serviceName}
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    {apt.professional?.user?.name || "Profissional"}
-                    {apt.company?.name && ` • ${apt.company.name}`}
+                    {professionalName}
+                    {companyName && ` • ${companyName}`}
                   </p>
                 </div>
                 <Badge variant={status.variant} className="flex items-center gap-1">
@@ -194,18 +265,18 @@ function BookingsPageContent() {
                     {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
                   </span>
                 </div>
-                {apt.company?.address && (
+                {companyAddress && (
                   <div className="flex items-center gap-2 text-muted-foreground sm:col-span-2">
                     <MapPin className="h-4 w-4" />
-                    <span>{apt.company.address}</span>
+                    <span>{companyAddress}</span>
                   </div>
                 )}
               </div>
 
               {/* Price */}
-              {apt.service?.price && (
+              {formatServicePrice(servicePrice) && (
                 <div className="text-sm font-medium">
-                  Valor: R$ {apt.service.price.toFixed(2)}
+                  Valor: {formatServicePrice(servicePrice)}
                 </div>
               )}
 
@@ -219,9 +290,9 @@ function BookingsPageContent() {
 
             {/* Actions */}
             <div className="flex flex-row md:flex-col gap-2">
-              {isUpcoming && apt.professional?.user?.phone && (
+              {isUpcoming && professionalPhone && (
                 <Button variant="outline" size="sm" asChild>
-                  <a href={`tel:${apt.professional.user.phone}`}>
+                  <a href={`tel:${professionalPhone}`}>
                     <Phone className="h-4 w-4 mr-1" />
                     Ligar
                   </a>
@@ -241,7 +312,7 @@ function BookingsPageContent() {
                       <AlertDialogTitle>Cancelar agendamento?</AlertDialogTitle>
                       <AlertDialogDescription>
                         Tem certeza que deseja cancelar o agendamento de{" "}
-                        <strong>{apt.service?.name}</strong> no dia{" "}
+                        <strong>{serviceName}</strong> no dia{" "}
                         <strong className="capitalize">{formatDate(apt.startTime)}</strong> às{" "}
                         <strong>{formatTime(apt.startTime)}</strong>?
                         <br /><br />
@@ -261,18 +332,25 @@ function BookingsPageContent() {
                 </AlertDialog>
               )}
 
-              {isCompleted && (
+              {isCompleted && professionalId && !apt.reviewSummary?.serviceReviews?.length && (
                 <Button variant="outline" size="sm" asChild>
-                  <Link href={`/professional/${apt.professional?.id}?review=true`}>
+                  <Link href={`/professional/${professionalId}?review=true`}>
                     <Star className="h-4 w-4 mr-1" />
                     Avaliar
                   </Link>
                 </Button>
               )}
 
-              {isUpcoming && (
+              {isCompleted && (apt.reviewSummary?.serviceReviews?.length ?? 0) > 0 && (
+                <Badge variant="secondary" className="flex items-center gap-1">
+                  <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                  Avaliado
+                </Badge>
+              )}
+
+              {isUpcoming && professionalId && (
                 <Button variant="default" size="sm" asChild>
-                  <Link href={`/booking/${apt.professional?.id}`}>
+                  <Link href={`/booking/${professionalId}?serviceId=${firstService?.id || ''}&date=${format(aptDate, 'yyyy-MM-dd')}&time=${formatTime(apt.startTime)}&appointmentId=${apt.id}`}>
                     <CalendarDays className="h-4 w-4 mr-1" />
                     Remarcar
                   </Link>
@@ -365,8 +443,19 @@ function BookingsPageContent() {
     <div className="min-h-screen bg-background">
       <Navigation />
       
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 mt-16">
         <div className="max-w-4xl mx-auto">
+          {/* Success Alert */}
+          {showSuccessAlert && (
+            <Alert className="mb-6 border-green-500 bg-green-50 dark:bg-green-950">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <AlertTitle className="text-green-800 dark:text-green-200">Agendamento confirmado!</AlertTitle>
+              <AlertDescription className="text-green-700 dark:text-green-300">
+                Seu agendamento foi realizado com sucesso. Você receberá uma confirmação em breve.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold mb-2">Meus Agendamentos</h1>

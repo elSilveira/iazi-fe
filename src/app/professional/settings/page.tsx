@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { ProfessionalLayout } from "@/components/professional/ProfessionalLayout";
@@ -12,9 +12,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Save, User, Bell, Calendar, Shield } from "lucide-react";
+import { Loader2, Save, User, Bell, Calendar, Shield, Clock, Copy, Check } from "lucide-react";
 import { fetchProfessionalMe, updateProfessionalProfile } from "@/lib/api";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface ProfessionalProfile {
   id: string;
@@ -26,17 +27,63 @@ interface ProfessionalProfile {
   title?: string;
   specialties?: string[];
   address?: string;
+  workingHours?: WorkingHours;
 }
+
+interface DaySchedule {
+  isOpen: boolean;
+  start: string;
+  end: string;
+}
+
+interface WorkingHours {
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+}
+
+const DAYS_OF_WEEK = [
+  { key: "monday" as const, label: "Segunda-feira", short: "Seg" },
+  { key: "tuesday" as const, label: "Terça-feira", short: "Ter" },
+  { key: "wednesday" as const, label: "Quarta-feira", short: "Qua" },
+  { key: "thursday" as const, label: "Quinta-feira", short: "Qui" },
+  { key: "friday" as const, label: "Sexta-feira", short: "Sex" },
+  { key: "saturday" as const, label: "Sábado", short: "Sáb" },
+  { key: "sunday" as const, label: "Domingo", short: "Dom" },
+];
+
+const EMPTY_WORKING_HOURS: WorkingHours = {
+  monday: { isOpen: false, start: "09:00", end: "18:00" },
+  tuesday: { isOpen: false, start: "09:00", end: "18:00" },
+  wednesday: { isOpen: false, start: "09:00", end: "18:00" },
+  thursday: { isOpen: false, start: "09:00", end: "18:00" },
+  friday: { isOpen: false, start: "09:00", end: "18:00" },
+  saturday: { isOpen: false, start: "09:00", end: "13:00" },
+  sunday: { isOpen: false, start: "09:00", end: "13:00" },
+};
 
 export default function ProfessionalSettingsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingHours, setIsEditingHours] = useState(false);
+  const [workingHours, setWorkingHours] = useState<WorkingHours | null>(null);
 
   const { data: profile, isLoading } = useQuery<ProfessionalProfile>({
     queryKey: ["professionalMe"],
     queryFn: fetchProfessionalMe,
   });
+
+  // Initialize working hours from profile
+  useEffect(() => {
+    if (profile) {
+      setWorkingHours(profile.workingHours || null);
+    }
+  }, [profile]);
 
   const [formData, setFormData] = useState({
     name: profile?.name || "",
@@ -58,8 +105,73 @@ export default function ProfessionalSettingsPage() {
     },
   });
 
+  const updateWorkingHoursMutation = useMutation({
+    mutationFn: updateProfessionalProfile,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["professionalMe"] });
+      toast.success("Horários de trabalho atualizados com sucesso!");
+      setIsEditingHours(false);
+    },
+    onError: () => {
+      toast.error("Erro ao atualizar horários de trabalho");
+    },
+  });
+
   const handleSave = () => {
     updateMutation.mutate(formData);
+  };
+
+  const handleSaveWorkingHours = () => {
+    if (workingHours) {
+      updateWorkingHoursMutation.mutate({ workingHours });
+    }
+  };
+
+  const initializeWorkingHours = () => {
+    setWorkingHours(EMPTY_WORKING_HOURS);
+    setIsEditingHours(true);
+  };
+
+  const handleDayToggle = (day: keyof WorkingHours) => {
+    if (!workingHours) return;
+    setWorkingHours({
+      ...workingHours,
+      [day]: { ...workingHours[day], isOpen: !workingHours[day].isOpen },
+    });
+  };
+
+  const handleTimeChange = (day: keyof WorkingHours, field: "start" | "end", value: string) => {
+    if (!workingHours) return;
+    setWorkingHours({
+      ...workingHours,
+      [day]: { ...workingHours[day], [field]: value },
+    });
+  };
+
+  const copyToAllDays = (sourceDay: keyof WorkingHours) => {
+    if (!workingHours) return;
+    const source = workingHours[sourceDay];
+    const newHours = { ...workingHours };
+    DAYS_OF_WEEK.forEach(({ key }) => {
+      if (key !== sourceDay) {
+        newHours[key] = { ...source };
+      }
+    });
+    setWorkingHours(newHours);
+    toast.success("Horários copiados para todos os dias");
+  };
+
+  const copyToWeekdays = (sourceDay: keyof WorkingHours) => {
+    if (!workingHours) return;
+    const source = workingHours[sourceDay];
+    const newHours = { ...workingHours };
+    ["monday", "tuesday", "wednesday", "thursday", "friday"].forEach((key) => {
+      if (key !== sourceDay) {
+        newHours[key as keyof WorkingHours] = { ...source };
+      }
+    });
+    setWorkingHours(newHours);
+    toast.success("Horários copiados para dias úteis");
   };
 
   return (
@@ -224,15 +336,169 @@ export default function ProfessionalSettingsPage() {
             <TabsContent value="availability">
               <Card>
                 <CardHeader>
-                  <CardTitle>Horários de Trabalho</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5" />
+                    Horários de Trabalho
+                  </CardTitle>
                   <CardDescription>
-                    Configure seus horários de disponibilidade
+                    Configure seus horários de disponibilidade para cada dia da semana.
+                    Seus clientes só poderão agendar nos horários configurados.
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground text-center py-8">
-                    Configuração de disponibilidade em desenvolvimento
-                  </p>
+                <CardContent className="space-y-6">
+                  {!workingHours ? (
+                    /* Empty state - no working hours configured */
+                    <div className="text-center py-8 space-y-4">
+                      <Clock className="h-12 w-12 text-muted-foreground/50 mx-auto" />
+                      <div>
+                        <p className="font-medium">Horários não configurados</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Configure seus horários de trabalho para que seus clientes possam agendar serviços.
+                        </p>
+                      </div>
+                      <Button onClick={initializeWorkingHours}>
+                        <Calendar className="h-4 w-4 mr-2" />
+                        Configurar Horários
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Quick actions */}
+                      {isEditingHours && (
+                        <div className="flex flex-wrap gap-2 p-4 bg-muted/50 rounded-lg">
+                          <span className="text-sm text-muted-foreground mr-2">Ações rápidas:</span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToWeekdays("monday")}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copiar Segunda para dias úteis
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToAllDays("monday")}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copiar Segunda para todos
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Days list */}
+                      <div className="space-y-4">
+                        {DAYS_OF_WEEK.map(({ key, label, short }) => (
+                          <div
+                            key={key}
+                            className={cn(
+                              "flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-lg border transition-colors",
+                              workingHours[key].isOpen 
+                                ? "bg-background" 
+                                : "bg-muted/30"
+                            )}
+                          >
+                            <div className="flex items-center justify-between sm:w-48">
+                              <div className="flex items-center gap-3">
+                                <Switch
+                                  checked={workingHours[key].isOpen}
+                                  onCheckedChange={() => handleDayToggle(key)}
+                                  disabled={!isEditingHours}
+                                />
+                                <div>
+                                  <p className="font-medium hidden sm:block">{label}</p>
+                                  <p className="font-medium sm:hidden">{short}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {workingHours[key].isOpen ? "Aberto" : "Fechado"}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {workingHours[key].isOpen && (
+                              <div className="flex items-center gap-2 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <Label htmlFor={`${key}-start`} className="text-sm text-muted-foreground whitespace-nowrap">
+                                    Das
+                                  </Label>
+                                  <Input
+                                    id={`${key}-start`}
+                                    type="time"
+                                    value={workingHours[key].start}
+                                    onChange={(e) => handleTimeChange(key, "start", e.target.value)}
+                                    className="w-32"
+                                    disabled={!isEditingHours}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label htmlFor={`${key}-end`} className="text-sm text-muted-foreground whitespace-nowrap">
+                                    às
+                                  </Label>
+                                  <Input
+                                    id={`${key}-end`}
+                                    type="time"
+                                    value={workingHours[key].end}
+                                    onChange={(e) => handleTimeChange(key, "end", e.target.value)}
+                                    className="w-32"
+                                    disabled={!isEditingHours}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {!workingHours[key].isOpen && (
+                              <div className="flex-1 text-sm text-muted-foreground italic">
+                                Não disponível para agendamentos
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Save/Edit buttons */}
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        {isEditingHours ? (
+                          <>
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setIsEditingHours(false);
+                                // Reset to original values
+                                setWorkingHours(profile?.workingHours || null);
+                              }}
+                            >
+                              Cancelar
+                            </Button>
+                            <Button
+                              onClick={handleSaveWorkingHours}
+                              disabled={updateWorkingHoursMutation.isPending}
+                            >
+                              {updateWorkingHoursMutation.isPending ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Check className="mr-2 h-4 w-4" />
+                              )}
+                              Salvar Horários
+                            </Button>
+                          </>
+                        ) : (
+                          <Button onClick={() => setIsEditingHours(true)}>
+                            <Calendar className="mr-2 h-4 w-4" />
+                            Editar Horários
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Info box */}
+                      <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-900">
+                        <p className="text-sm text-blue-700 dark:text-blue-300">
+                          <strong>Dica:</strong> Os horários disponíveis são gerados automaticamente a cada 15 minutos 
+                          dentro do período configurado. Agendamentos existentes e bloqueios de agenda serão 
+                          considerados ao exibir a disponibilidade para seus clientes.
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

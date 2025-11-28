@@ -44,9 +44,10 @@ export function ReviewDialog({
       }),
     onSuccess: () => {
       toast.success("Avaliação enviada com sucesso!");
-      queryClient.invalidateQueries({ queryKey: ["pendingReviews"] });
-      queryClient.invalidateQueries({ queryKey: ["myReviews"] });
-      queryClient.invalidateQueries({ queryKey: ["userAppointments"] });
+      // Force refetch of all related queries
+      queryClient.invalidateQueries({ queryKey: ["pendingReviews"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["myReviews"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["userAppointments"], refetchType: "all" });
       onOpenChange(false);
     },
     onError: () => {

@@ -330,6 +330,31 @@ export const fetchProfessionalPopularServices = async (professionalId: string) =
   return response.data;
 };
 
+// Fetch dates with appointments for calendar highlighting (lightweight endpoint)
+// Returns array of dates in "YYYY-MM-DD" format that have at least one appointment
+export const fetchProfessionalAppointmentDates = async (
+  professionalId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<string[]> => {
+  try {
+    const response = await apiClient.get(`/professionals/${professionalId}/appointment-dates`, {
+      params: {
+        dateFrom,
+        dateTo,
+      },
+    });
+    // Expected response: { dates: ["2025-11-28", "2025-11-29", ...] }
+    if (response.data?.dates && Array.isArray(response.data.dates)) {
+      return response.data.dates;
+    }
+    return Array.isArray(response.data) ? response.data : [];
+  } catch {
+    // Silently fail - this is just for UI enhancement
+    return [];
+  }
+};
+
 // Fetch upcoming appointments using the appointments endpoint with filters
 export const fetchUpcomingAppointments = async (professionalId: string, limit = 5) => {
   const today = new Date().toISOString().split("T")[0];
@@ -355,7 +380,8 @@ export const fetchProfessionalAppointments = async (
   professionalId: string,
   dateFrom?: string,
   dateTo?: string,
-  status?: string
+  status?: string,
+  skipAutoComplete = true // Skip auto-complete to show pending appointments from past dates
 ) => {
   const response = await apiClient.get("/appointments", {
     params: {
@@ -364,6 +390,7 @@ export const fetchProfessionalAppointments = async (
       dateTo,
       status,
       include: "user,service",
+      skipAutoComplete,
     },
   });
   if (response.data?.data && Array.isArray(response.data.data)) {
@@ -412,7 +439,8 @@ export const fetchAvailability = async (params: {
 export const createAppointment = async (data: {
   serviceId: string;
   professionalId: string;
-  startTime: string;
+  date: string;      // YYYY-MM-DD format
+  time: string;      // HH:MM format
   notes?: string;
 }) => {
   const response = await apiClient.post("/appointments", data);
@@ -440,6 +468,15 @@ export const fetchAppointmentDetails = async (appointmentId: string) => {
 // Cancel an appointment
 export const cancelAppointment = async (appointmentId: string) => {
   const response = await apiClient.patch(`/appointments/${appointmentId}/cancel`);
+  return response.data;
+};
+
+// Reschedule an appointment to a new date/time
+export const rescheduleAppointmentById = async (
+  appointmentId: string,
+  data: { date: string; time: string; notes?: string }
+) => {
+  const response = await apiClient.patch(`/appointments/${appointmentId}/reschedule`, data);
   return response.data;
 };
 
@@ -492,13 +529,153 @@ export const deleteReview = async (reviewId: string) => {
   return response.data;
 };
 
+// --- Client Review API Functions (Professional reviews Client) ---
+
+export interface ClientReview {
+  id: string;
+  rating: number;
+  comment: string | null;
+  wasNoShow: boolean;
+  appointmentId: string;
+  professionalId: string;
+  clientId: string;
+  createdAt: string;
+  updatedAt: string;
+  client?: {
+    id: string;
+    name: string;
+    avatar: string | null;
+  };
+  professional?: {
+    id: string;
+    name?: string;
+    image?: string | null;
+    user?: {
+      id: string;
+      name: string;
+      avatar?: string | null;
+    };
+  };
+  appointment?: {
+    id: string;
+    startTime: string;
+    endTime: string;
+    status: string;
+    notes?: string | null;
+    services?: Array<{
+      appointmentId: string;
+      serviceId: string;
+      service: {
+        id: string;
+        name: string;
+      };
+    }>;
+  };
+}
+
+export interface ClientStats {
+  averageRating: number;
+  totalReviews: number;
+  noShowCount: number;
+  noShowRate: number;
+}
+
+export interface CanReviewClientResponse {
+  canReview: boolean;
+  reason?: string;
+}
+
+// Check if client review exists for an appointment
+export const checkClientReviewExists = async (appointmentId: string): Promise<boolean> => {
+  const response = await apiClient.get(`/appointments/${appointmentId}/client-review/exists`);
+  return response.data?.exists ?? false;
+};
+
+// Check if professional can review the client
+export const canReviewClient = async (appointmentId: string): Promise<CanReviewClientResponse> => {
+  const response = await apiClient.get(`/appointments/${appointmentId}/can-review-client`);
+  return response.data;
+};
+
+// Get client review for an appointment
+export const getClientReview = async (appointmentId: string): Promise<ClientReview> => {
+  const response = await apiClient.get(`/appointments/${appointmentId}/client-review`);
+  return response.data;
+};
+
+// Create client review
+export const createClientReview = async (
+  appointmentId: string,
+  data: { rating: number; comment?: string; wasNoShow?: boolean }
+): Promise<ClientReview> => {
+  const response = await apiClient.post(`/appointments/${appointmentId}/client-review`, data);
+  return response.data;
+};
+
+// Update client review
+export const updateClientReview = async (
+  appointmentId: string,
+  data: { rating?: number; comment?: string; wasNoShow?: boolean }
+): Promise<ClientReview> => {
+  const response = await apiClient.put(`/appointments/${appointmentId}/client-review`, data);
+  return response.data;
+};
+
+// Delete client review
+export const deleteClientReview = async (appointmentId: string): Promise<void> => {
+  await apiClient.delete(`/appointments/${appointmentId}/client-review`);
+};
+
+// Mark client as no-show
+export const markClientNoShow = async (
+  appointmentId: string,
+  comment?: string
+): Promise<{ message: string; review: ClientReview }> => {
+  const response = await apiClient.post(`/appointments/${appointmentId}/no-show`, { comment });
+  return response.data;
+};
+
+// Get client stats (average rating, no-show rate, etc.)
+export const getClientStats = async (userId: string): Promise<ClientStats> => {
+  const response = await apiClient.get(`/users/${userId}/client-stats`);
+  return response.data;
+};
+
+// Fetch client reviews received (reviews made by professionals about the client)
+// Accepts userId or 'me' for authenticated user
+export const fetchClientReviews = async (userId: string = 'me'): Promise<ClientReview[]> => {
+  const response = await apiClient.get(`/users/${userId}/client-reviews`);
+  // API returns { reviews: [...], total, page, limit, totalPages }
+  if (response.data?.reviews && Array.isArray(response.data.reviews)) {
+    return response.data.reviews;
+  }
+  if (response.data?.data && Array.isArray(response.data.data)) {
+    return response.data.data;
+  }
+  return Array.isArray(response.data) ? response.data : [];
+};
+
+// Fetch current user's client reviews (wrapper to avoid React Query context issues)
+export const fetchMyClientReviews = async (): Promise<ClientReview[]> => {
+  return fetchClientReviews('me');
+};
+
+// Fetch client reviews made by a professional
+export const fetchProfessionalClientReviews = async (professionalId: string): Promise<ClientReview[]> => {
+  const response = await apiClient.get(`/professionals/${professionalId}/client-reviews`);
+  if (response.data?.data && Array.isArray(response.data.data)) {
+    return response.data.data;
+  }
+  return Array.isArray(response.data) ? response.data : [];
+};
+
 // Fetch pending reviews (completed appointments without reviews)
 export const fetchPendingReviews = async () => {
   const response = await apiClient.get("/appointments", {
     params: {
       status: "COMPLETED",
       hasReview: false,
-      include: "service,professional",
+      minimal: true,
     },
   });
   if (response.data?.data && Array.isArray(response.data.data)) {
