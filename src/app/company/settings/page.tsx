@@ -77,13 +77,13 @@ interface WorkingHours {
 }
 
 const EMPTY_WORKING_HOURS: WorkingHours = {
-  monday: { isOpen: false, start: "09:00", end: "18:00" },
-  tuesday: { isOpen: false, start: "09:00", end: "18:00" },
-  wednesday: { isOpen: false, start: "09:00", end: "18:00" },
-  thursday: { isOpen: false, start: "09:00", end: "18:00" },
-  friday: { isOpen: false, start: "09:00", end: "18:00" },
-  saturday: { isOpen: false, start: "09:00", end: "14:00" },
-  sunday: { isOpen: false, start: "09:00", end: "14:00" },
+  monday: { isOpen: false, start: "07:00", end: "18:00" },
+  tuesday: { isOpen: false, start: "07:00", end: "18:00" },
+  wednesday: { isOpen: false, start: "07:00", end: "18:00" },
+  thursday: { isOpen: false, start: "07:00", end: "18:00" },
+  friday: { isOpen: false, start: "07:00", end: "18:00" },
+  saturday: { isOpen: false, start: "07:00", end: "14:00" },
+  sunday: { isOpen: false, start: "07:00", end: "14:00" },
 };
 
 const defaultSettings: CompanySettings = {
@@ -134,19 +134,58 @@ export default function CompanySettingsPage() {
     enabled: !!companyId,
   });
 
+  // Normalize API working hours (open/close) to local format (start/end)
+  const normalizeWorkingHours = (apiHoursRaw: string | Record<string, { open?: string | null; close?: string | null; isOpen?: boolean }> | null): WorkingHours | null => {
+    if (!apiHoursRaw) return null;
+    
+    // Parse if it's a JSON string
+    const apiHours = typeof apiHoursRaw === 'string' ? JSON.parse(apiHoursRaw) : apiHoursRaw;
+    
+    const days: Array<keyof WorkingHours> = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const normalized: WorkingHours = { ...EMPTY_WORKING_HOURS };
+    
+    for (const day of days) {
+      const apiDay = apiHours[day];
+      if (apiDay) {
+        normalized[day] = {
+          isOpen: apiDay.isOpen ?? false,
+          start: apiDay.open || "07:00",
+          end: apiDay.close || "18:00",
+        };
+      }
+    }
+    return normalized;
+  };
+
   // Initialize state from API data
   useEffect(() => {
     if (companyData) {
       if (companyData.settings) {
         setSettings({ ...defaultSettings, ...companyData.settings });
       }
-      setWorkingHours(companyData.workingHours || null);
+      setWorkingHours(normalizeWorkingHours(companyData.workingHours));
     }
   }, [companyData]);
 
+  // Format working hours for API (null values when closed)
+  const formatWorkingHoursForApi = (hours: WorkingHours) => {
+    const formatted: Record<string, { open: string | null; close: string | null; isOpen: boolean }> = {};
+    for (const [day, schedule] of Object.entries(hours)) {
+      formatted[day] = {
+        open: schedule.isOpen ? schedule.start : null,
+        close: schedule.isOpen ? schedule.end : null,
+        isOpen: schedule.isOpen,
+      };
+    }
+    return formatted;
+  };
+
   const updateMutation = useMutation({
     mutationFn: (data: { settings?: Partial<CompanySettings>; workingHours?: WorkingHours }) =>
-      updateCompanyDetails(companyId!, data),
+      updateCompanyDetails(companyId!, {
+        ...data,
+        workingHours: data.workingHours ? JSON.stringify(formatWorkingHoursForApi(data.workingHours)) : undefined,
+      }),
     onSuccess: () => {
       toast.success("Configurações salvas com sucesso!");
       queryClient.invalidateQueries({ queryKey: ["companyDetails", companyId] });
@@ -176,10 +215,14 @@ export default function CompanySettingsPage() {
     value: string | boolean
   ) => {
     if (!workingHours) return;
+    
+    // Ensure the day schedule exists with defaults
+    const currentDaySchedule = workingHours[day] || { isOpen: false, start: "07:00", end: "18:00" };
+    
     setWorkingHours({
       ...workingHours,
       [day]: {
-        ...workingHours[day],
+        ...currentDaySchedule,
         [field]: value,
       },
     });
@@ -345,54 +388,57 @@ export default function CompanySettingsPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {DAYS_OF_WEEK.map(({ key, label }) => (
-                      <div
-                        key={key}
-                        className="flex items-center gap-4 flex-wrap sm:flex-nowrap p-3 rounded-lg border"
-                      >
-                        <div className="flex items-center gap-2 w-40">
-                          <Switch
-                            checked={workingHours[key].isOpen}
-                            onCheckedChange={(checked) =>
-                              updateWorkingHour(key, "isOpen", checked)
-                            }
-                          />
-                          <span
-                            className={`text-sm ${
-                              !workingHours[key].isOpen ? "text-muted-foreground" : "font-medium"
-                            }`}
-                          >
-                            {label}
-                          </span>
-                        </div>
-
-                        {workingHours[key].isOpen ? (
-                          <div className="flex items-center gap-2">
-                            <Input
-                              type="time"
-                              value={workingHours[key].start}
-                              onChange={(e) =>
-                                updateWorkingHour(key, "start", e.target.value)
+                    {DAYS_OF_WEEK.map(({ key, label }) => {
+                      const daySchedule = workingHours[key] || { isOpen: false, start: "07:00", end: "18:00" };
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-4 flex-wrap sm:flex-nowrap p-3 rounded-lg border"
+                        >
+                          <div className="flex items-center gap-2 w-40">
+                            <Switch
+                              checked={daySchedule.isOpen}
+                              onCheckedChange={(checked) =>
+                                updateWorkingHour(key, "isOpen", checked)
                               }
-                              className="w-32"
                             />
-                            <span className="text-muted-foreground">às</span>
-                            <Input
-                              type="time"
-                              value={workingHours[key].end}
-                              onChange={(e) =>
-                                updateWorkingHour(key, "end", e.target.value)
-                              }
-                              className="w-32"
-                            />
+                            <span
+                              className={`text-sm ${
+                                !daySchedule.isOpen ? "text-muted-foreground" : "font-medium"
+                              }`}
+                            >
+                              {label}
+                            </span>
                           </div>
-                        ) : (
-                          <span className="text-sm text-muted-foreground italic">
-                            Fechado
-                          </span>
-                        )}
-                      </div>
-                    ))}
+
+                          {daySchedule.isOpen ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="time"
+                                value={daySchedule.start}
+                                onChange={(e) =>
+                                  updateWorkingHour(key, "start", e.target.value)
+                                }
+                                className="w-32"
+                              />
+                              <span className="text-muted-foreground">às</span>
+                              <Input
+                                type="time"
+                                value={daySchedule.end}
+                                onChange={(e) =>
+                                  updateWorkingHour(key, "end", e.target.value)
+                                }
+                                className="w-32"
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground italic">
+                              Fechado
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

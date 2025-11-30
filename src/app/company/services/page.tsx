@@ -118,13 +118,13 @@ interface FormData {
 }
 
 const DEFAULT_SCHEDULE: ServiceSchedule = {
-  monday: { isOpen: true, start: "09:00", end: "18:00" },
-  tuesday: { isOpen: true, start: "09:00", end: "18:00" },
-  wednesday: { isOpen: true, start: "09:00", end: "18:00" },
-  thursday: { isOpen: true, start: "09:00", end: "18:00" },
-  friday: { isOpen: true, start: "09:00", end: "18:00" },
-  saturday: { isOpen: false, start: "09:00", end: "14:00" },
-  sunday: { isOpen: false, start: "09:00", end: "14:00" },
+  monday: { isOpen: true, start: "07:00", end: "18:00" },
+  tuesday: { isOpen: true, start: "07:00", end: "18:00" },
+  wednesday: { isOpen: true, start: "07:00", end: "18:00" },
+  thursday: { isOpen: true, start: "07:00", end: "18:00" },
+  friday: { isOpen: true, start: "07:00", end: "18:00" },
+  saturday: { isOpen: false, start: "07:00", end: "14:00" },
+  sunday: { isOpen: false, start: "07:00", end: "14:00" },
 };
 
 const DAYS_OF_WEEK: Array<{ key: keyof ServiceSchedule; label: string }> = [
@@ -181,13 +181,13 @@ export default function CompanyServicesPage() {
     if (companyData?.workingHours) {
       const wh = companyData.workingHours;
       const newSchedule: ServiceSchedule = {
-        monday: { isOpen: wh.monday?.isOpen ?? true, start: wh.monday?.start || "09:00", end: wh.monday?.end || "18:00" },
-        tuesday: { isOpen: wh.tuesday?.isOpen ?? true, start: wh.tuesday?.start || "09:00", end: wh.tuesday?.end || "18:00" },
-        wednesday: { isOpen: wh.wednesday?.isOpen ?? true, start: wh.wednesday?.start || "09:00", end: wh.wednesday?.end || "18:00" },
-        thursday: { isOpen: wh.thursday?.isOpen ?? true, start: wh.thursday?.start || "09:00", end: wh.thursday?.end || "18:00" },
-        friday: { isOpen: wh.friday?.isOpen ?? true, start: wh.friday?.start || "09:00", end: wh.friday?.end || "18:00" },
-        saturday: { isOpen: wh.saturday?.isOpen ?? false, start: wh.saturday?.start || "09:00", end: wh.saturday?.end || "14:00" },
-        sunday: { isOpen: wh.sunday?.isOpen ?? false, start: wh.sunday?.start || "09:00", end: wh.sunday?.end || "14:00" },
+        monday: { isOpen: wh.monday?.isOpen ?? true, start: wh.monday?.start || "07:00", end: wh.monday?.end || "18:00" },
+        tuesday: { isOpen: wh.tuesday?.isOpen ?? true, start: wh.tuesday?.start || "07:00", end: wh.tuesday?.end || "18:00" },
+        wednesday: { isOpen: wh.wednesday?.isOpen ?? true, start: wh.wednesday?.start || "07:00", end: wh.wednesday?.end || "18:00" },
+        thursday: { isOpen: wh.thursday?.isOpen ?? true, start: wh.thursday?.start || "07:00", end: wh.thursday?.end || "18:00" },
+        friday: { isOpen: wh.friday?.isOpen ?? true, start: wh.friday?.start || "07:00", end: wh.friday?.end || "18:00" },
+        saturday: { isOpen: wh.saturday?.isOpen ?? false, start: wh.saturday?.start || "07:00", end: wh.saturday?.end || "14:00" },
+        sunday: { isOpen: wh.sunday?.isOpen ?? false, start: wh.sunday?.start || "07:00", end: wh.sunday?.end || "14:00" },
       };
       setCompanySchedule(newSchedule);
     }

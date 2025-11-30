@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { CompanyLayout } from "@/components/company/CompanyLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,14 +17,35 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   ChevronLeft,
   ChevronRight,
   Clock,
   User,
   Scissors,
   Calendar as CalendarIcon,
+  MoreHorizontal,
+  Check,
+  X,
+  Loader2,
+  Phone,
+  Mail,
 } from "lucide-react";
-import { fetchCompanyAppointments, fetchCompanyStaff } from "@/lib/api";
+import { fetchCompanyAppointments, fetchCompanyStaff, updateAppointmentStatus } from "@/lib/api";
+import { toast } from "sonner";
 import {
   format,
   startOfWeek,
@@ -43,53 +64,172 @@ import {
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
+// API returns appointments in this format
+interface APIAppointment {
+  id: string;
+  startTime: string;
+  endTime: string;
+  status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+  notes?: string;
+  user?: {
+    id: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    avatar?: string;
+  };
+  professional?: {
+    id: string;
+    name?: string;
+    image?: string;
+    user?: {
+      name: string;
+      avatar?: string;
+    };
+  };
+  professionalId?: string;
+  services?: Array<{
+    serviceId: string;
+    service: {
+      id: string;
+      name: string;
+      duration?: string;
+      price?: string;
+    };
+  }>;
+}
+
+// Normalized appointment for display
 interface Appointment {
   id: string;
   clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
   clientAvatar?: string;
   professionalName: string;
   professionalId: string;
   serviceName: string;
   date: string;
   time: string;
+  endTime: string;
   duration: number;
-  status: "pending" | "confirmed" | "completed" | "cancelled";
+  status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+  notes?: string;
 }
 
 type ViewMode = "week" | "month";
 
-const statusColors = {
-  pending: "bg-yellow-500",
-  confirmed: "bg-blue-500",
-  completed: "bg-green-500",
-  cancelled: "bg-gray-400",
+const statusColors: Record<string, string> = {
+  PENDING: "bg-yellow-500",
+  CONFIRMED: "bg-blue-500",
+  COMPLETED: "bg-green-500",
+  CANCELLED: "bg-gray-400",
+  NO_SHOW: "bg-red-500",
 };
 
-const statusLabels = {
-  pending: "Pendente",
-  confirmed: "Confirmado",
-  completed: "Concluído",
-  cancelled: "Cancelado",
+const statusLabels: Record<string, string> = {
+  PENDING: "Pendente",
+  CONFIRMED: "Confirmado",
+  COMPLETED: "Concluído",
+  CANCELLED: "Cancelado",
+  NO_SHOW: "Não Compareceu",
 };
+
+// Normalize API appointment to display format
+function normalizeAppointment(apt: APIAppointment): Appointment {
+  const startDate = parseISO(apt.startTime);
+  const endDate = parseISO(apt.endTime);
+  
+  // Calculate duration in minutes
+  const durationMs = endDate.getTime() - startDate.getTime();
+  const durationMins = Math.round(durationMs / 60000);
+  
+  // Get client name
+  const clientName = apt.user?.name || "Cliente";
+  
+  // Get professional name
+  const professionalName = apt.professional?.name 
+    || apt.professional?.user?.name 
+    || "Profissional";
+  
+  // Get service name from first service
+  const serviceName = apt.services?.[0]?.service?.name || "Serviço";
+  
+  return {
+    id: apt.id,
+    clientName,
+    clientEmail: apt.user?.email,
+    clientPhone: apt.user?.phone,
+    clientAvatar: apt.user?.avatar,
+    professionalName,
+    professionalId: apt.professional?.id || apt.professionalId || "",
+    serviceName,
+    date: format(startDate, "yyyy-MM-dd"),
+    time: format(startDate, "HH:mm"),
+    endTime: format(endDate, "HH:mm"),
+    duration: durationMins,
+    status: apt.status,
+    notes: apt.notes,
+  };
+}
 
 export default function CompanyCalendarPage() {
   const { user } = useAuth();
   const companyId = user?.companyId;
+  const queryClient = useQueryClient();
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [selectedProfessional, setSelectedProfessional] = useState<string>("all");
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
 
-  const { data: appointments = [], isLoading: appointmentsLoading } = useQuery<Appointment[]>({
-    queryKey: ["companyAppointments", companyId],
-    queryFn: () => fetchCompanyAppointments(companyId!),
+  // Calculate date range for fetching
+  const dateRange = useMemo(() => {
+    if (viewMode === "week") {
+      const start = startOfWeek(currentDate, { weekStartsOn: 0 });
+      const end = endOfWeek(currentDate, { weekStartsOn: 0 });
+      return { dateFrom: format(start, "yyyy-MM-dd"), dateTo: format(end, "yyyy-MM-dd") };
+    } else {
+      const start = startOfMonth(currentDate);
+      const end = endOfMonth(currentDate);
+      return { dateFrom: format(start, "yyyy-MM-dd"), dateTo: format(end, "yyyy-MM-dd") };
+    }
+  }, [currentDate, viewMode]);
+
+  const { data: rawAppointments = [], isLoading: appointmentsLoading } = useQuery<APIAppointment[]>({
+    queryKey: ["companyAppointments", companyId, dateRange.dateFrom, dateRange.dateTo],
+    queryFn: () => fetchCompanyAppointments(companyId!, { 
+      dateFrom: dateRange.dateFrom, 
+      dateTo: dateRange.dateTo,
+      include: "user,professional,service",
+    }),
     enabled: !!companyId,
   });
+
+  // Normalize appointments
+  const appointments: Appointment[] = useMemo(() => {
+    return rawAppointments.map(normalizeAppointment);
+  }, [rawAppointments]);
 
   const { data: staff = [] } = useQuery({
     queryKey: ["companyStaff", companyId],
     queryFn: () => fetchCompanyStaff(companyId!),
     enabled: !!companyId,
+  });
+
+  // Status update mutation
+  const statusMutation = useMutation({
+    mutationFn: ({ appointmentId, status }: { appointmentId: string; status: string }) =>
+      updateAppointmentStatus(appointmentId, status),
+    onSuccess: () => {
+      toast.success("Status atualizado com sucesso!");
+      queryClient.invalidateQueries({ queryKey: ["companyAppointments", companyId] });
+      setShowAppointmentDialog(false);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Erro ao atualizar status");
+    },
   });
 
   const days = useMemo(() => {
@@ -267,7 +407,11 @@ export default function CompanyCalendarPage() {
                         {dayAppointments.slice(0, viewMode === "month" ? 3 : 10).map((apt) => (
                           <div
                             key={apt.id}
-                            className={`text-xs p-1 rounded ${statusColors[apt.status]} bg-opacity-20 border-l-2 ${statusColors[apt.status].replace("bg-", "border-")}`}
+                            className={`text-xs p-1 rounded cursor-pointer hover:opacity-80 transition-opacity ${statusColors[apt.status]} bg-opacity-20 border-l-2 ${statusColors[apt.status].replace("bg-", "border-")}`}
+                            onClick={() => {
+                              setSelectedAppointment(apt);
+                              setShowAppointmentDialog(true);
+                            }}
                           >
                             <div className="font-medium truncate">
                               {apt.time} - {apt.serviceName}
@@ -328,7 +472,11 @@ export default function CompanyCalendarPage() {
                 {getAppointmentsForDay(new Date()).map((apt) => (
                   <div
                     key={apt.id}
-                    className="flex items-center gap-4 p-3 rounded-lg border"
+                    className="flex items-center gap-4 p-3 rounded-lg border hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      setSelectedAppointment(apt);
+                      setShowAppointmentDialog(true);
+                    }}
                   >
                     <Avatar>
                       <AvatarImage src={apt.clientAvatar} />
@@ -345,7 +493,7 @@ export default function CompanyCalendarPage() {
                       <div className="flex items-center gap-3 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {apt.time}
+                          {apt.time} - {apt.endTime}
                         </span>
                         <span className="flex items-center gap-1">
                           <Scissors className="h-3 w-3" />
@@ -358,16 +506,174 @@ export default function CompanyCalendarPage() {
                       </div>
                     </div>
                     <Badge
-                      variant={apt.status === "confirmed" ? "default" : "secondary"}
+                      variant={apt.status === "CONFIRMED" ? "default" : "secondary"}
                     >
                       {statusLabels[apt.status]}
                     </Badge>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                        <Button variant="ghost" size="icon">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {apt.status === "PENDING" && (
+                          <DropdownMenuItem 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              statusMutation.mutate({ appointmentId: apt.id, status: "CONFIRMED" });
+                            }}
+                          >
+                            <Check className="h-4 w-4 mr-2" />
+                            Confirmar
+                          </DropdownMenuItem>
+                        )}
+                        {(apt.status === "PENDING" || apt.status === "CONFIRMED") && (
+                          <DropdownMenuItem 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              statusMutation.mutate({ appointmentId: apt.id, status: "COMPLETED" });
+                            }}
+                          >
+                            <Check className="h-4 w-4 mr-2" />
+                            Marcar como Concluído
+                          </DropdownMenuItem>
+                        )}
+                        {apt.status !== "CANCELLED" && apt.status !== "COMPLETED" && (
+                          <DropdownMenuItem 
+                            className="text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              statusMutation.mutate({ appointmentId: apt.id, status: "CANCELLED" });
+                            }}
+                          >
+                            <X className="h-4 w-4 mr-2" />
+                            Cancelar
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 ))}
               </div>
             )}
           </CardContent>
         </Card>
+
+        {/* Appointment Details Dialog */}
+        <Dialog open={showAppointmentDialog} onOpenChange={setShowAppointmentDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Detalhes do Agendamento</DialogTitle>
+              <DialogDescription>
+                Informações completas do agendamento
+              </DialogDescription>
+            </DialogHeader>
+            {selectedAppointment && (
+              <div className="space-y-4">
+                {/* Client Info */}
+                <div className="flex items-center gap-4">
+                  <Avatar className="h-12 w-12">
+                    <AvatarImage src={selectedAppointment.clientAvatar} />
+                    <AvatarFallback>
+                      {selectedAppointment.clientName
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")
+                        .slice(0, 2)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="font-semibold">{selectedAppointment.clientName}</p>
+                    <div className="flex gap-2 text-sm text-muted-foreground">
+                      {selectedAppointment.clientPhone && (
+                        <a href={`tel:${selectedAppointment.clientPhone}`} className="flex items-center gap-1 hover:text-primary">
+                          <Phone className="h-3 w-3" />
+                          {selectedAppointment.clientPhone}
+                        </a>
+                      )}
+                      {selectedAppointment.clientEmail && (
+                        <a href={`mailto:${selectedAppointment.clientEmail}`} className="flex items-center gap-1 hover:text-primary">
+                          <Mail className="h-3 w-3" />
+                          {selectedAppointment.clientEmail}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Appointment Details */}
+                <div className="space-y-2 pt-4 border-t">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Serviço</span>
+                    <span className="font-medium">{selectedAppointment.serviceName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Profissional</span>
+                    <span className="font-medium">{selectedAppointment.professionalName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Data</span>
+                    <span className="font-medium">
+                      {format(parseISO(selectedAppointment.date), "dd/MM/yyyy", { locale: ptBR })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Horário</span>
+                    <span className="font-medium">
+                      {selectedAppointment.time} - {selectedAppointment.endTime}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Duração</span>
+                    <span className="font-medium">{selectedAppointment.duration} min</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Status</span>
+                    <Badge variant={selectedAppointment.status === "CONFIRMED" ? "default" : "secondary"}>
+                      {statusLabels[selectedAppointment.status]}
+                    </Badge>
+                  </div>
+                  {selectedAppointment.notes && (
+                    <div className="pt-2">
+                      <span className="text-muted-foreground text-sm">Observações:</span>
+                      <p className="text-sm mt-1 bg-muted p-2 rounded">{selectedAppointment.notes}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2">
+              {selectedAppointment?.status === "PENDING" && (
+                <Button
+                  onClick={() => statusMutation.mutate({ appointmentId: selectedAppointment.id, status: "CONFIRMED" })}
+                  disabled={statusMutation.isPending}
+                >
+                  {statusMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+                  Confirmar
+                </Button>
+              )}
+              {(selectedAppointment?.status === "PENDING" || selectedAppointment?.status === "CONFIRMED") && (
+                <Button
+                  variant="outline"
+                  onClick={() => statusMutation.mutate({ appointmentId: selectedAppointment!.id, status: "COMPLETED" })}
+                  disabled={statusMutation.isPending}
+                >
+                  Marcar Concluído
+                </Button>
+              )}
+              {selectedAppointment?.status !== "CANCELLED" && selectedAppointment?.status !== "COMPLETED" && (
+                <Button
+                  variant="destructive"
+                  onClick={() => statusMutation.mutate({ appointmentId: selectedAppointment!.id, status: "CANCELLED" })}
+                  disabled={statusMutation.isPending}
+                >
+                  Cancelar Agendamento
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </CompanyLayout>
   );

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Navigation } from "@/components/Navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -14,7 +14,6 @@ import {
   ArrowLeft,
   Clock,
   Star,
-  DollarSign,
   User,
   Building2,
   ChevronRight,
@@ -22,8 +21,10 @@ import {
   Scissors,
   HelpCircle,
   CheckCircle,
+  Users,
+  TrendingUp,
 } from "lucide-react";
-import { fetchServiceDetails, fetchProfessionals } from "@/lib/api";
+import { fetchServiceDetails, fetchSearch, type SearchProfessionalService } from "@/lib/api";
 
 interface ServiceCategory {
   id: number;
@@ -42,39 +43,24 @@ interface ServiceDetails {
   companyId?: string | null;
 }
 
-interface Professional {
-  id: string;
-  name?: string;
-  image?: string;
-  bio?: string;
-  rating?: number;
-  totalReviews?: number;
-  reviewCount?: number;
-  user?: {
+// Aggregated service data from all professionals
+interface AggregatedServiceInfo {
+  minPrice: number;
+  maxPrice: number;
+  minDuration: string;
+  maxDuration: string;
+  avgRating: number;
+  totalProfessionals: number;
+  professionals: Array<{
     id: string;
     name: string;
-    avatarUrl?: string;
-  };
-  company?: {
-    id: string;
-    name: string;
-  } | null;
-  services?: Array<{
-    serviceId?: string;
-    price?: string | number | null;
-    service?: {
-      id: string;
-      name: string;
-      price?: string | number;
-    };
+    image: string | null;
+    rating: number;
+    price: number;
+    duration: string;
+    serviceId: string;
+    company: { id: string; name: string } | null;
   }>;
-}
-
-interface ProfessionalsResponse {
-  data: Professional[];
-  pagination?: {
-    totalItems: number;
-  };
 }
 
 export default function ServiceDetailsPage() {
@@ -91,24 +77,103 @@ export default function ServiceDetailsPage() {
     enabled: !!serviceId,
   });
 
-  // Fetch professionals that offer this service
-  const { data: professionalsData, isLoading: loadingProfessionals } = useQuery<ProfessionalsResponse>({
-    queryKey: ["professionals", "byService", serviceId],
-    queryFn: () => fetchProfessionals({ serviceId }),
-    enabled: !!serviceId,
+  // Fetch professionals using the search API with service name
+  const { data: searchData, isLoading: loadingProfessionals } = useQuery({
+    queryKey: ["search", "service-professionals", service?.name],
+    queryFn: () => fetchSearch({ 
+      q: service?.name,
+      type: "all",
+      limit: 50,
+    }),
+    enabled: !!service?.name,
   });
 
-  const professionals = professionalsData?.data || [];
+  // Get professional_services from search and filter/aggregate by service name
+  const aggregatedInfo = useMemo<AggregatedServiceInfo | null>(() => {
+    if (!searchData?.professional_services || !service?.name) return null;
+    
+    const professionalServices = searchData.professional_services as SearchProfessionalService[];
+    
+    // Filter services that match this service name (case insensitive)
+    const matchingServices = professionalServices.filter(
+      ps => ps.name.toLowerCase().trim() === service.name.toLowerCase().trim()
+    );
+    
+    if (matchingServices.length === 0) return null;
+    
+    // Extract all professionals with their prices
+    const professionals: AggregatedServiceInfo['professionals'] = [];
+    let minPrice = Infinity;
+    let maxPrice = 0;
+    let minDuration = "";
+    let maxDuration = "";
+    let totalRating = 0;
+    let ratingCount = 0;
+    
+    matchingServices.forEach(ps => {
+      const price = typeof ps.price === 'number' ? ps.price : parseFloat(String(ps.price)) || 0;
+      
+      if (price > 0) {
+        if (price < minPrice) minPrice = price;
+        if (price > maxPrice) maxPrice = price;
+      }
+      
+      if (ps.duration) {
+        if (!minDuration) minDuration = ps.duration;
+        maxDuration = ps.duration;
+      }
+      
+      if (ps.profissional) {
+        if (ps.profissional.rating > 0) {
+          totalRating += ps.profissional.rating;
+          ratingCount++;
+        }
+        
+        professionals.push({
+          id: ps.profissional.id,
+          name: ps.profissional.name,
+          image: ps.profissional.image,
+          rating: ps.profissional.rating,
+          price: price,
+          duration: ps.duration,
+          serviceId: ps.id,
+          company: ps.profissional.company || ps.company,
+        });
+      }
+    });
+    
+    // Sort by rating (best first)
+    professionals.sort((a, b) => b.rating - a.rating);
+    
+    return {
+      minPrice: minPrice === Infinity ? 0 : minPrice,
+      maxPrice,
+      minDuration,
+      maxDuration,
+      avgRating: ratingCount > 0 ? totalRating / ratingCount : 0,
+      totalProfessionals: professionals.length,
+      professionals,
+    };
+  }, [searchData, service?.name]);
 
-  const formatPrice = (price?: string | number) => {
-    if (price === null || price === undefined) return null;
-    const numPrice = typeof price === "string" ? parseFloat(price) : price;
-    return isNaN(numPrice)
-      ? null
-      : new Intl.NumberFormat("pt-BR", {
-          style: "currency",
-          currency: "BRL",
-        }).format(numPrice);
+  const formatPrice = (price?: number) => {
+    if (price === null || price === undefined || price === 0) return null;
+    return `R$ ${price.toFixed(0)}`;
+  };
+
+  const formatDuration = (duration?: string) => {
+    if (!duration) return null;
+    // If already formatted, return as is
+    if (duration.includes("h") || duration.includes("min")) return duration;
+    // If just a number, treat as minutes
+    const mins = parseInt(duration);
+    if (isNaN(mins)) return duration;
+    if (mins >= 60) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return m > 0 ? `${h}h ${m}min` : `${h}h`;
+    }
+    return `${mins}min`;
   };
 
   const getInitials = (name?: string) => {
@@ -121,19 +186,7 @@ export default function ServiceDetailsPage() {
       .slice(0, 2);
   };
 
-  const getProfessionalPrice = (professional: Professional): string | null => {
-    if (!professional.services) return null;
-    const serviceLink = professional.services.find(
-      (s) => s.serviceId === serviceId || s.service?.id === serviceId
-    );
-    if (serviceLink) {
-      const price = serviceLink.price ?? serviceLink.service?.price;
-      return formatPrice(price);
-    }
-    return formatPrice(service?.price);
-  };
-
-  const handleBookProfessional = (professionalId: string) => {
+  const handleBookProfessional = (professionalId: string, serviceId: string) => {
     router.push(`/booking/${professionalId}?serviceId=${serviceId}`);
   };
 
@@ -149,10 +202,11 @@ export default function ServiceDetailsPage() {
         // User cancelled or share failed
       }
     } else {
-      // Fallback: copy to clipboard
       navigator.clipboard.writeText(window.location.href);
     }
   };
+
+  const hasPriceRange = aggregatedInfo && aggregatedInfo.minPrice !== aggregatedInfo.maxPrice;
 
   if (loadingService) {
     return (
@@ -240,29 +294,65 @@ export default function ServiceDetailsPage() {
               {/* Service Header Card */}
               <Card className="mb-6">
                 <CardContent className="p-6">
-                  {service.category && (
-                    <Badge variant="secondary" className="mb-2">
-                      {service.category.name}
-                    </Badge>
-                  )}
-                  <h1 className="text-2xl font-bold mb-2">{service.name}</h1>
-                  
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-                    {service.duration && (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        {service.duration}
-                      </span>
-                    )}
-                    {service.price && (
-                      <span className="flex items-center gap-1 text-primary font-semibold text-base">
-                        {formatPrice(service.price)}
-                      </span>
-                    )}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      {service.category && (
+                        <Badge variant="secondary" className="mb-2">
+                          {service.category.name}
+                        </Badge>
+                      )}
+                      <h1 className="text-2xl font-bold mb-3">{service.name}</h1>
+                      
+                      {service.description && (
+                        <p className="text-muted-foreground mb-4">{service.description}</p>
+                      )}
+                    </div>
                   </div>
 
-                  {service.description && (
-                    <p className="text-muted-foreground">{service.description}</p>
+                  {/* Aggregated Stats */}
+                  {aggregatedInfo && aggregatedInfo.totalProfessionals > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 border-t">
+                      {/* Price Range */}
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Valor</p>
+                        {hasPriceRange ? (
+                          <p className="font-semibold text-primary">
+                            {formatPrice(aggregatedInfo.minPrice)} - {formatPrice(aggregatedInfo.maxPrice)}
+                          </p>
+                        ) : (
+                          <p className="font-semibold text-primary">
+                            {formatPrice(aggregatedInfo.minPrice) || formatPrice(Number(service.price))}
+                          </p>
+                        )}
+                      </div>
+                      
+                      {/* Duration */}
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Duração</p>
+                        <p className="font-semibold flex items-center justify-center gap-1">
+                          <Clock className="h-4 w-4" />
+                          {formatDuration(aggregatedInfo.minDuration) || formatDuration(service.duration)}
+                        </p>
+                      </div>
+                      
+                      {/* Rating */}
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Avaliação</p>
+                        <p className="font-semibold flex items-center justify-center gap-1">
+                          <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                          {aggregatedInfo.avgRating > 0 ? aggregatedInfo.avgRating.toFixed(1) : "Novo"}
+                        </p>
+                      </div>
+                      
+                      {/* Professionals Count */}
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Profissionais</p>
+                        <p className="font-semibold flex items-center justify-center gap-1">
+                          <Users className="h-4 w-4" />
+                          {aggregatedInfo.totalProfessionals}
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -270,15 +360,20 @@ export default function ServiceDetailsPage() {
               {/* Tabs */}
               <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList className="w-full grid grid-cols-3 mb-4">
-                  <TabsTrigger value="professionals">Profissionais</TabsTrigger>
+                  <TabsTrigger value="professionals">
+                    Profissionais
+                    {aggregatedInfo && (
+                      <span className="ml-1 text-xs">({aggregatedInfo.totalProfessionals})</span>
+                    )}
+                  </TabsTrigger>
                   <TabsTrigger value="includes">O que inclui</TabsTrigger>
-                  <TabsTrigger value="faq">Perguntas frequentes</TabsTrigger>
+                  <TabsTrigger value="faq">Perguntas</TabsTrigger>
                 </TabsList>
 
                 {/* Professionals Tab */}
-                <TabsContent value="professionals" className="space-y-4">
+                <TabsContent value="professionals" className="space-y-3">
                   {loadingProfessionals ? (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {[...Array(3)].map((_, i) => (
                         <Card key={i}>
                           <CardContent className="p-4">
@@ -293,7 +388,7 @@ export default function ServiceDetailsPage() {
                         </Card>
                       ))}
                     </div>
-                  ) : professionals.length === 0 ? (
+                  ) : !aggregatedInfo || aggregatedInfo.professionals.length === 0 ? (
                     <Card>
                       <CardContent className="py-8 text-center">
                         <User className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -306,65 +401,74 @@ export default function ServiceDetailsPage() {
                       </CardContent>
                     </Card>
                   ) : (
-                    professionals.map((professional) => (
+                    aggregatedInfo.professionals.map((professional, index) => (
                       <Card
                         key={professional.id}
-                        className="hover:shadow-md transition-shadow"
+                        className={`hover:shadow-md transition-all cursor-pointer border-l-4 ${
+                          index === 0 ? "border-l-primary" : "border-l-transparent"
+                        }`}
+                        onClick={() => handleBookProfessional(professional.id, professional.serviceId)}
                       >
                         <CardContent className="p-4">
                           <div className="flex items-center gap-4">
-                            <Avatar className="h-12 w-12">
-                              <AvatarImage
-                                src={professional.image || professional.user?.avatarUrl}
-                              />
-                              <AvatarFallback>
-                                {getInitials(professional.name || professional.user?.name)}
-                              </AvatarFallback>
-                            </Avatar>
-
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold truncate">
-                                {professional.name || professional.user?.name || "Profissional"}
-                              </h3>
-                              
-                              {/* Rating */}
-                              {professional.rating !== undefined && professional.rating > 0 && (
-                                <div className="flex items-center gap-1 text-sm">
-                                  <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                                  <span className="font-medium">
-                                    {professional.rating.toFixed(1)}
-                                  </span>
-                                  {(professional.reviewCount || professional.totalReviews) && (
-                                    <span className="text-muted-foreground">
-                                      ({professional.reviewCount || professional.totalReviews} avaliações)
-                                    </span>
-                                  )}
+                            <div className="relative">
+                              <Avatar className="h-12 w-12">
+                                <AvatarImage src={professional.image || undefined} />
+                                <AvatarFallback className="bg-primary/10 text-primary">
+                                  {getInitials(professional.name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              {index === 0 && (
+                                <div className="absolute -top-1 -right-1 bg-primary rounded-full p-0.5">
+                                  <TrendingUp className="h-3 w-3 text-white" />
                                 </div>
-                              )}
-
-                              {/* Services offered */}
-                              {professional.services && professional.services.length > 1 && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {professional.services
-                                    .slice(0, 3)
-                                    .map((s) => s.service?.name || "")
-                                    .filter(Boolean)
-                                    .join(" • ")}
-                                </p>
                               )}
                             </div>
 
-                            <div className="flex flex-col items-end gap-2">
-                              <span className="font-semibold text-primary">
-                                {getProfessionalPrice(professional) || formatPrice(service.price)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold truncate">
+                                  {professional.name}
+                                </h3>
+                                {index === 0 && (
+                                  <Badge variant="default" className="text-xs shrink-0">
+                                    Melhor avaliado
+                                  </Badge>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+                                {/* Rating */}
+                                {professional.rating > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
+                                    {professional.rating.toFixed(1)}
+                                  </span>
+                                )}
+                                
+                                {/* Duration */}
+                                {professional.duration && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3.5 w-3.5" />
+                                    {formatDuration(professional.duration)}
+                                  </span>
+                                )}
+                                
+                                {/* Company */}
+                                {professional.company && (
+                                  <span className="flex items-center gap-1 truncate">
+                                    <Building2 className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{professional.company.name}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <span className="text-lg font-bold text-primary">
+                                {formatPrice(professional.price) || formatPrice(Number(service.price))}
                               </span>
-                              <span className="text-xs text-muted-foreground">por serviço</span>
-                              <Button
-                                size="sm"
-                                onClick={() => handleBookProfessional(professional.id)}
-                              >
-                                Agendar
-                              </Button>
+                              <ChevronRight className="h-5 w-5 text-muted-foreground" />
                             </div>
                           </div>
                         </CardContent>
@@ -387,13 +491,13 @@ export default function ServiceDetailsPage() {
                             </p>
                           </div>
                         </div>
-                        {service.duration && (
+                        {(aggregatedInfo?.minDuration || service.duration) && (
                           <div className="flex items-start gap-3">
                             <Clock className="h-5 w-5 text-primary mt-0.5" />
                             <div>
                               <h4 className="font-medium">Duração estimada</h4>
                               <p className="text-sm text-muted-foreground">
-                                Aproximadamente {service.duration}
+                                Aproximadamente {formatDuration(aggregatedInfo?.minDuration) || formatDuration(service.duration)}
                               </p>
                             </div>
                           </div>
@@ -403,7 +507,9 @@ export default function ServiceDetailsPage() {
                           <div>
                             <h4 className="font-medium">Profissional qualificado</h4>
                             <p className="text-sm text-muted-foreground">
-                              Atendimento realizado por profissionais experientes
+                              {aggregatedInfo && aggregatedInfo.totalProfessionals > 0
+                                ? `Escolha entre ${aggregatedInfo.totalProfessionals} profissionais qualificados`
+                                : "Atendimento realizado por profissionais experientes"}
                             </p>
                           </div>
                         </div>
@@ -430,21 +536,21 @@ export default function ServiceDetailsPage() {
                         <div>
                           <h4 className="font-medium flex items-center gap-2">
                             <HelpCircle className="h-4 w-4 text-primary" />
-                            Posso cancelar meu agendamento?
+                            Por que os preços variam?
                           </h4>
                           <p className="text-sm text-muted-foreground mt-1 ml-6">
-                            Sim, você pode cancelar ou reagendar seu compromisso através da
-                            página de agendamentos até 24 horas antes do horário marcado.
+                            Cada profissional define seu próprio preço para o serviço. O valor
+                            pode variar conforme a experiência, localização e qualificações do profissional.
                           </p>
                         </div>
                         <div>
                           <h4 className="font-medium flex items-center gap-2">
                             <HelpCircle className="h-4 w-4 text-primary" />
-                            Como são definidos os preços?
+                            Posso cancelar meu agendamento?
                           </h4>
                           <p className="text-sm text-muted-foreground mt-1 ml-6">
-                            Cada profissional define seu próprio preço para o serviço. O valor
-                            pode variar conforme a experiência e localização do profissional.
+                            Sim, você pode cancelar ou reagendar seu compromisso através da
+                            página de agendamentos até 24 horas antes do horário marcado.
                           </p>
                         </div>
                       </div>
@@ -454,16 +560,71 @@ export default function ServiceDetailsPage() {
               </Tabs>
             </div>
 
-            {/* Sidebar - Related Services */}
+            {/* Sidebar - Quick Stats */}
             <div className="lg:w-80">
               <Card className="sticky top-24">
-                <CardHeader>
-                  <CardTitle className="text-lg">Serviços Relacionados</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">Resumo do Serviço</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    Em breve você poderá ver serviços relacionados aqui.
-                  </p>
+                <CardContent className="space-y-4">
+                  {/* Price Range Summary */}
+                  {aggregatedInfo && aggregatedInfo.totalProfessionals > 0 && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Valor</span>
+                        <span className="font-semibold text-primary">
+                          {hasPriceRange
+                            ? `${formatPrice(aggregatedInfo.minPrice)} - ${formatPrice(aggregatedInfo.maxPrice)}`
+                            : formatPrice(aggregatedInfo.minPrice) || formatPrice(Number(service.price))
+                          }
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Duração</span>
+                        <span className="font-medium">
+                          {formatDuration(aggregatedInfo.minDuration) || formatDuration(service.duration)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Profissionais</span>
+                        <span className="font-medium">{aggregatedInfo.totalProfessionals} disponíveis</span>
+                      </div>
+                      
+                      {/* Top Professionals Avatars */}
+                      <div className="pt-3 border-t">
+                        <p className="text-sm text-muted-foreground mb-2">Melhores avaliados</p>
+                        <div className="flex -space-x-2">
+                          {aggregatedInfo.professionals.slice(0, 5).map((prof) => (
+                            <Avatar key={prof.id} className="h-8 w-8 border-2 border-background">
+                              <AvatarImage src={prof.image || undefined} />
+                              <AvatarFallback className="text-xs">
+                                {prof.name?.charAt(0)}
+                              </AvatarFallback>
+                            </Avatar>
+                          ))}
+                          {aggregatedInfo.totalProfessionals > 5 && (
+                            <div className="h-8 w-8 rounded-full bg-muted border-2 border-background flex items-center justify-center text-xs font-medium">
+                              +{aggregatedInfo.totalProfessionals - 5}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* CTA Button */}
+                  {aggregatedInfo && aggregatedInfo.professionals.length > 0 && (
+                    <Button 
+                      className="w-full" 
+                      size="lg"
+                      onClick={() => handleBookProfessional(
+                        aggregatedInfo.professionals[0].id,
+                        aggregatedInfo.professionals[0].serviceId
+                      )}
+                    >
+                      Agendar com o melhor avaliado
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -471,15 +632,25 @@ export default function ServiceDetailsPage() {
         </div>
 
         {/* Fixed Bottom CTA for Mobile */}
-        {professionals.length > 0 && (
+        {aggregatedInfo && aggregatedInfo.professionals.length > 0 && (
           <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t lg:hidden">
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={() => handleBookProfessional(professionals[0].id)}
-            >
-              Agendar Serviço
-            </Button>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-sm text-muted-foreground">A partir de</p>
+                <p className="font-bold text-lg text-primary">
+                  {formatPrice(aggregatedInfo.minPrice) || formatPrice(Number(service.price))}
+                </p>
+              </div>
+              <Button
+                size="lg"
+                onClick={() => handleBookProfessional(
+                  aggregatedInfo.professionals[0].id,
+                  aggregatedInfo.professionals[0].serviceId
+                )}
+              >
+                Agendar Agora
+              </Button>
+            </div>
           </div>
         )}
       </main>

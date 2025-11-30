@@ -22,6 +22,13 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { 
   Briefcase, 
@@ -31,15 +38,59 @@ import {
   Star,
   Users,
   Loader2,
+  MapPin,
+  Search,
+  Phone,
+  ArrowRight,
+  CheckCircle2,
 } from "lucide-react";
 import { createProfessionalProfile } from "@/lib/api";
 
+// Brazilian states
+const BRAZILIAN_STATES = [
+  { code: "AC", name: "Acre" },
+  { code: "AL", name: "Alagoas" },
+  { code: "AP", name: "Amapá" },
+  { code: "AM", name: "Amazonas" },
+  { code: "BA", name: "Bahia" },
+  { code: "CE", name: "Ceará" },
+  { code: "DF", name: "Distrito Federal" },
+  { code: "ES", name: "Espírito Santo" },
+  { code: "GO", name: "Goiás" },
+  { code: "MA", name: "Maranhão" },
+  { code: "MT", name: "Mato Grosso" },
+  { code: "MS", name: "Mato Grosso do Sul" },
+  { code: "MG", name: "Minas Gerais" },
+  { code: "PA", name: "Pará" },
+  { code: "PB", name: "Paraíba" },
+  { code: "PR", name: "Paraná" },
+  { code: "PE", name: "Pernambuco" },
+  { code: "PI", name: "Piauí" },
+  { code: "RJ", name: "Rio de Janeiro" },
+  { code: "RN", name: "Rio Grande do Norte" },
+  { code: "RS", name: "Rio Grande do Sul" },
+  { code: "RO", name: "Rondônia" },
+  { code: "RR", name: "Roraima" },
+  { code: "SC", name: "Santa Catarina" },
+  { code: "SP", name: "São Paulo" },
+  { code: "SE", name: "Sergipe" },
+  { code: "TO", name: "Tocantins" },
+];
+
 const professionalSchema = z.object({
-  title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
+  name: z.string().min(3, "Nome deve ter pelo menos 3 caracteres"),
+  role: z.string().min(3, "Cargo/especialidade deve ter pelo menos 3 caracteres"),
   bio: z.string().min(20, "Biografia deve ter pelo menos 20 caracteres"),
-  specialties: z.string().min(3, "Informe pelo menos uma especialidade"),
   phone: z.string().min(10, "Telefone inválido"),
-  address: z.string().optional(),
+  address: z.object({
+    street: z.string().optional(),
+    number: z.string().optional(),
+    complement: z.string().optional(),
+    neighborhood: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zipCode: z.string().optional(),
+  }).optional(),
 });
 
 type ProfessionalFormData = z.infer<typeof professionalSchema>;
@@ -70,25 +121,89 @@ const benefits = [
 export default function BecomeProfessionalPage() {
   const router = useRouter();
   const { user, updateAuthState, accessToken } = useAuth();
-  const [step, setStep] = useState<"info" | "form">("info");
+  const [step, setStep] = useState<"info" | "form" | "address">("info");
+  const [isLoadingCep, setIsLoadingCep] = useState(false);
 
   const form = useForm<ProfessionalFormData>({
     resolver: zodResolver(professionalSchema),
     defaultValues: {
-      title: "",
+      name: user?.name || "",
+      role: "",
       bio: "",
-      specialties: "",
       phone: user?.phone || "",
-      address: "",
+      address: {
+        street: "",
+        number: "",
+        complement: "",
+        neighborhood: "",
+        city: "",
+        state: "",
+        zipCode: "",
+      },
     },
   });
 
+  const formatPhone = (value: string) => {
+    const digits = value.replace(/\D/g, "").slice(0, 11);
+    return digits;
+  };
+
+  const formatZipCode = (value: string) => {
+    const digits = value.replace(/\D/g, "").slice(0, 8);
+    if (digits.length > 5) {
+      return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+    }
+    return digits;
+  };
+
+  // Lookup address by CEP using ViaCEP API
+  const lookupCep = async (cep: string) => {
+    const cleanCep = cep.replace(/\D/g, "");
+    if (cleanCep.length !== 8) return;
+
+    setIsLoadingCep(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await response.json();
+      
+      if (data.erro) {
+        toast.error("CEP não encontrado");
+        return;
+      }
+
+      // Auto-fill address fields
+      form.setValue("address.street", data.logradouro || "", { shouldValidate: true });
+      form.setValue("address.neighborhood", data.bairro || "", { shouldValidate: true });
+      form.setValue("address.city", data.localidade || "", { shouldValidate: true });
+      form.setValue("address.state", data.uf || "", { shouldValidate: true });
+      
+      if (data.complemento) {
+        form.setValue("address.complement", data.complemento, { shouldValidate: true });
+      }
+
+      toast.success("Endereço preenchido automaticamente");
+    } catch {
+      toast.error("Erro ao buscar CEP");
+    } finally {
+      setIsLoadingCep(false);
+    }
+  };
+
   const createProfileMutation = useMutation({
     mutationFn: (data: ProfessionalFormData) => {
-      const payload = {
-        ...data,
-        specialties: data.specialties.split(",").map((s) => s.trim()).filter(Boolean),
+      // Build payload matching API requirements
+      const payload: Record<string, unknown> = {
+        name: data.name,
+        role: data.role,
+        bio: data.bio,
+        phone: data.phone,
       };
+
+      // Add address only if it has content
+      if (data.address?.zipCode || data.address?.city) {
+        payload.address = data.address;
+      }
+
       return createProfessionalProfile(payload);
     },
     onSuccess: (data) => {
@@ -113,6 +228,17 @@ export default function BecomeProfessionalPage() {
 
   const onSubmit = (data: ProfessionalFormData) => {
     createProfileMutation.mutate(data);
+  };
+
+  const handleNextStep = async () => {
+    if (step === "form") {
+      const fieldsToValidate: (keyof ProfessionalFormData)[] = ["name", "role", "bio", "phone"];
+      const isValid = await form.trigger(fieldsToValidate);
+      
+      if (isValid) {
+        setStep("address");
+      }
+    }
   };
 
   if (user?.isProfessional) {
@@ -190,142 +316,342 @@ export default function BecomeProfessionalPage() {
               </div>
             </div>
           ) : (
-            <Card className="max-w-2xl mx-auto">
-              <CardHeader>
-                <CardTitle>Criar Perfil Profissional</CardTitle>
-                <CardDescription>
-                  Preencha as informações abaixo para começar a oferecer seus serviços.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                    <FormField
-                      control={form.control}
-                      name="title"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Título Profissional</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Ex: Cabeleireira, Manicure, Massagista..."
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Como você quer ser identificado na plataforma
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+            <div className="max-w-2xl mx-auto">
+              {/* Progress Steps */}
+              <div className="flex items-center mb-8">
+                <div className="flex items-center">
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      step === "form" || step === "address" ? "bg-primary text-primary-foreground" : "bg-muted"
+                    }`}
+                  >
+                    {step === "address" ? <CheckCircle2 className="h-5 w-5" /> : "1"}
+                  </div>
+                  <span className="ml-2 font-medium">Informações</span>
+                </div>
+                <div className={`flex-1 h-1 mx-4 ${step === "address" ? "bg-primary" : "bg-muted"}`} />
+                <div className="flex items-center">
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      step === "address" ? "bg-primary text-primary-foreground" : "bg-muted"
+                    }`}
+                  >
+                    2
+                  </div>
+                  <span className="ml-2 font-medium">Endereço</span>
+                </div>
+              </div>
 
-                    <FormField
-                      control={form.control}
-                      name="specialties"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Especialidades</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Ex: Corte feminino, Coloração, Penteados"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Separe suas especialidades por vírgula
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)}>
+                  {step === "form" && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Briefcase className="h-5 w-5" />
+                          Informações Profissionais
+                        </CardTitle>
+                        <CardDescription>
+                          Preencha os dados básicos do seu perfil profissional
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <FormField
+                          control={form.control}
+                          name="name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Nome Completo *</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="Seu nome completo"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Como você será identificado na plataforma
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <FormField
-                      control={form.control}
-                      name="bio"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Sobre você</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Conte um pouco sobre sua experiência e trabalho..."
-                              className="min-h-[120px]"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Esta descrição aparecerá no seu perfil público
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                        <FormField
+                          control={form.control}
+                          name="role"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Cargo / Especialidade *</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="Ex: Cabeleireiro, Manicure, Massagista..."
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Sua profissão ou área de atuação principal
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <FormField
-                      control={form.control}
-                      name="phone"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Telefone</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="(11) 99999-9999"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                        <FormField
+                          control={form.control}
+                          name="bio"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Sobre você *</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="Conte um pouco sobre sua experiência e trabalho..."
+                                  className="min-h-[120px]"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Esta descrição aparecerá no seu perfil público
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <FormField
-                      control={form.control}
-                      name="address"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Endereço (opcional)</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Rua, número, bairro, cidade"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Onde você atende seus clientes
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                        <FormField
+                          control={form.control}
+                          name="phone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Telefone *</FormLabel>
+                              <FormControl>
+                                <div className="relative">
+                                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                  <Input
+                                    placeholder="(11) 99999-9999"
+                                    className="pl-10"
+                                    {...field}
+                                    onChange={(e) =>
+                                      field.onChange(formatPhone(e.target.value))
+                                    }
+                                  />
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <div className="flex gap-4 pt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setStep("info")}
-                        disabled={createProfileMutation.isPending}
-                      >
-                        Voltar
-                      </Button>
-                      <Button
-                        type="submit"
-                        className="flex-1"
-                        disabled={createProfileMutation.isPending}
-                      >
-                        {createProfileMutation.isPending ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Criando...
-                          </>
-                        ) : (
-                          "Criar Perfil Profissional"
-                        )}
-                      </Button>
-                    </div>
-                  </form>
-                </Form>
-              </CardContent>
-            </Card>
+                        <div className="flex gap-4 pt-4">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setStep("info")}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="button"
+                            className="flex-1"
+                            onClick={handleNextStep}
+                          >
+                            Próximo
+                            <ArrowRight className="h-4 w-4 ml-2" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {step === "address" && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <MapPin className="h-5 w-5" />
+                          Endereço (Opcional)
+                        </CardTitle>
+                        <CardDescription>
+                          Informe onde você atende seus clientes. Digite o CEP para preencher automaticamente.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <FormField
+                          control={form.control}
+                          name="address.zipCode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>CEP</FormLabel>
+                              <div className="flex gap-2">
+                                <FormControl>
+                                  <Input
+                                    placeholder="00000-000"
+                                    className="max-w-[200px]"
+                                    {...field}
+                                    onChange={(e) => {
+                                      const formatted = formatZipCode(e.target.value);
+                                      field.onChange(formatted);
+                                      // Auto-lookup when CEP is complete
+                                      if (formatted.replace(/\D/g, "").length === 8) {
+                                        lookupCep(formatted);
+                                      }
+                                    }}
+                                  />
+                                </FormControl>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => lookupCep(field.value || "")}
+                                  disabled={isLoadingCep || (field.value?.replace(/\D/g, "").length !== 8)}
+                                >
+                                  {isLoadingCep ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Search className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </div>
+                              <FormDescription>
+                                Digite o CEP para buscar o endereço automaticamente
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <div className="grid gap-4 sm:grid-cols-4">
+                          <FormField
+                            control={form.control}
+                            name="address.street"
+                            render={({ field }) => (
+                              <FormItem className="sm:col-span-3">
+                                <FormLabel>Logradouro</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Rua, Avenida, etc." {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="address.number"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Número</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="123" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <FormField
+                            control={form.control}
+                            name="address.complement"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Complemento</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Sala, andar, etc." {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="address.neighborhood"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Bairro</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Bairro" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <FormField
+                            control={form.control}
+                            name="address.city"
+                            render={({ field }) => (
+                              <FormItem className="sm:col-span-2">
+                                <FormLabel>Cidade</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Cidade" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="address.state"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Estado</FormLabel>
+                                <Select
+                                  onValueChange={field.onChange}
+                                  value={field.value}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Selecione" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    {BRAZILIAN_STATES.map((state) => (
+                                      <SelectItem key={state.code} value={state.code}>
+                                        {state.code} - {state.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className="flex gap-4 pt-4">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setStep("form")}
+                            disabled={createProfileMutation.isPending}
+                          >
+                            Voltar
+                          </Button>
+                          <Button
+                            type="submit"
+                            className="flex-1"
+                            disabled={createProfileMutation.isPending}
+                          >
+                            {createProfileMutation.isPending ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Criando...
+                              </>
+                            ) : (
+                              "Criar Perfil Profissional"
+                            )}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </form>
+              </Form>
+            </div>
           )}
         </main>
       </div>

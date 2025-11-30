@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useForm } from "react-hook-form";
@@ -20,6 +20,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from "@/components/ui/form";
 import {
   Select,
@@ -30,7 +31,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Building, MapPin, Save, Clock, Search, ImageIcon, Calendar } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { Loader2, Building, MapPin, Save, Clock, Search, ImageIcon, Calendar, Phone, Mail, Globe, Star, Users, Briefcase, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { fetchCompanyDetails, updateCompanyDetails, upsertCompanyAddress, fetchCategories } from "@/lib/api";
 
@@ -82,6 +84,32 @@ interface WorkingHours {
   sunday: DaySchedule;
 }
 
+const DEFAULT_DAY_SCHEDULE: DaySchedule = {
+  open: "07:00",
+  close: "18:00",
+  isOpen: true,
+};
+
+const DEFAULT_WORKING_HOURS: WorkingHours = {
+  monday: { ...DEFAULT_DAY_SCHEDULE },
+  tuesday: { ...DEFAULT_DAY_SCHEDULE },
+  wednesday: { ...DEFAULT_DAY_SCHEDULE },
+  thursday: { ...DEFAULT_DAY_SCHEDULE },
+  friday: { ...DEFAULT_DAY_SCHEDULE },
+  saturday: { open: "07:00", close: "14:00", isOpen: false },
+  sunday: { open: "07:00", close: "14:00", isOpen: false },
+};
+
+const DAYS_OF_WEEK: Array<{ key: keyof WorkingHours; label: string; shortLabel: string }> = [
+  { key: "monday", label: "Segunda-feira", shortLabel: "Seg" },
+  { key: "tuesday", label: "Terça-feira", shortLabel: "Ter" },
+  { key: "wednesday", label: "Quarta-feira", shortLabel: "Qua" },
+  { key: "thursday", label: "Quinta-feira", shortLabel: "Qui" },
+  { key: "friday", label: "Sexta-feira", shortLabel: "Sex" },
+  { key: "saturday", label: "Sábado", shortLabel: "Sáb" },
+  { key: "sunday", label: "Domingo", shortLabel: "Dom" },
+];
+
 const profileSchema = z.object({
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   description: z.string().min(1, "Descrição é obrigatória"),
@@ -114,6 +142,8 @@ export default function CompanyProfilePage() {
   const [activeTab, setActiveTab] = useState("info");
   const [isLoadingCep, setIsLoadingCep] = useState(false);
   const [workingHours, setWorkingHours] = useState<WorkingHours | null>(null);
+  const [hasWorkingHoursChanges, setHasWorkingHoursChanges] = useState(false);
+  const [isEditingHours, setIsEditingHours] = useState(false);
 
   // Fetch company details (includes address)
   const { data: company, isLoading } = useQuery({
@@ -142,6 +172,20 @@ export default function CompanyProfilePage() {
       return null;
     }
   })();
+
+  // Initialize working hours state when data loads
+  useEffect(() => {
+    if (parsedWorkingHours && !workingHours) {
+      setWorkingHours(parsedWorkingHours);
+    }
+  }, [parsedWorkingHours]);
+
+  // Initialize with defaults if no working hours exist and user wants to edit
+  const initializeWorkingHours = () => {
+    setWorkingHours(DEFAULT_WORKING_HOURS);
+    setIsEditingHours(true);
+    setHasWorkingHoursChanges(true);
+  };
 
   const profileForm = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
@@ -218,6 +262,33 @@ export default function CompanyProfilePage() {
     },
   });
 
+  // Format working hours for API (null values when closed)
+  const formatWorkingHoursForApi = (hours: WorkingHours) => {
+    const formatted: Record<string, { open: string | null; close: string | null; isOpen: boolean }> = {};
+    for (const [day, schedule] of Object.entries(hours)) {
+      formatted[day] = {
+        open: schedule.isOpen ? schedule.open : null,
+        close: schedule.isOpen ? schedule.close : null,
+        isOpen: schedule.isOpen,
+      };
+    }
+    return formatted;
+  };
+
+  const updateWorkingHoursMutation = useMutation({
+    mutationFn: (data: { workingHours: WorkingHours }) => 
+      updateCompanyDetails(companyId!, { workingHours: JSON.stringify(formatWorkingHoursForApi(data.workingHours)) }),
+    onSuccess: () => {
+      toast.success("Horários atualizados com sucesso!");
+      queryClient.invalidateQueries({ queryKey: ["companyDetails", companyId] });
+      setHasWorkingHoursChanges(false);
+      setIsEditingHours(false);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Erro ao atualizar horários");
+    },
+  });
+
   const updateAddressMutation = useMutation({
     mutationFn: (data: AddressFormData) => upsertCompanyAddress(companyId!, data),
     onSuccess: () => {
@@ -228,6 +299,48 @@ export default function CompanyProfilePage() {
       toast.error(error.message || "Erro ao atualizar endereço");
     },
   });
+
+  // Update working hours for a specific day
+  const updateDaySchedule = (day: keyof WorkingHours, field: keyof DaySchedule, value: string | boolean) => {
+    if (!workingHours) return;
+    
+    setWorkingHours(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [day]: {
+          ...prev[day],
+          [field]: value,
+        },
+      };
+    });
+    setHasWorkingHoursChanges(true);
+  };
+
+  // Copy hours from one day to all weekdays
+  const copyToWeekdays = (sourceDay: keyof WorkingHours) => {
+    if (!workingHours) return;
+    
+    const sourceSchedule = workingHours[sourceDay];
+    const weekdays: (keyof WorkingHours)[] = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+    
+    setWorkingHours(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev };
+      weekdays.forEach(day => {
+        updated[day] = { ...sourceSchedule };
+      });
+      return updated;
+    });
+    setHasWorkingHoursChanges(true);
+    toast.success("Horários copiados para dias úteis");
+  };
+
+  // Save working hours
+  const handleSaveWorkingHours = () => {
+    if (!workingHours) return;
+    updateWorkingHoursMutation.mutate({ workingHours });
+  };
 
   const onSubmitProfile = (data: ProfileFormData) => {
     updateMutation.mutate(data);
@@ -257,6 +370,14 @@ export default function CompanyProfilePage() {
     sunday: "Domingo",
   };
 
+  // Calculate stats
+  const stats = {
+    rating: company?.rating?.toFixed(1) || "0.0",
+    reviews: company?.totalReviews || 0,
+    services: company?.services?.length || company?.serviceCount || 0,
+    professionals: company?.professionals?.length || company?.professionalCount || 0,
+  };
+
   return (
     <CompanyLayout>
       <div className="space-y-6">
@@ -266,12 +387,22 @@ export default function CompanyProfilePage() {
         </div>
 
         {/* Company Header */}
-        <Card>
-          <CardContent className="p-6">
+        <Card className="overflow-hidden">
+          {/* Cover Image */}
+          {company?.coverImage && (
+            <div className="h-32 md:h-48 w-full overflow-hidden bg-muted">
+              <img 
+                src={company.coverImage} 
+                alt="Capa" 
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+          <CardContent className={`p-6 ${company?.coverImage ? "-mt-12" : ""}`}>
             <div className="flex flex-col md:flex-row items-start gap-6">
-              {/* Logo and Cover */}
+              {/* Logo */}
               <div className="relative">
-                <Avatar className="h-24 w-24 border-4 border-background">
+                <Avatar className={`h-24 w-24 border-4 border-background shadow-lg ${company?.coverImage ? "ring-2 ring-background" : ""}`}>
                   <AvatarImage src={company?.logo} />
                   <AvatarFallback className="text-2xl bg-primary text-primary-foreground">
                     {company?.name?.[0]?.toUpperCase() || "E"}
@@ -279,38 +410,83 @@ export default function CompanyProfilePage() {
                 </Avatar>
               </div>
               
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold">{company?.name}</h2>
+              <div className="flex-1 space-y-3">
+                <div>
+                  <h2 className="text-2xl font-bold">{company?.name}</h2>
+                  {company?.description && (
+                    <p className="text-muted-foreground text-sm mt-1 line-clamp-2">
+                      {company.description}
+                    </p>
+                  )}
+                </div>
                 
                 {/* Categories */}
                 {company?.categories && company.categories.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
+                  <div className="flex flex-wrap gap-2">
                     {company.categories.map((cat: string, idx: number) => (
-                      <Badge key={idx} variant="secondary">{cat}</Badge>
+                      <Badge key={idx} variant="secondary">
+                        <Briefcase className="h-3 w-3 mr-1" />
+                        {cat}
+                      </Badge>
                     ))}
                   </div>
                 )}
                 
-                {/* Location */}
-                {address?.city && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1 mt-2">
-                    <MapPin className="h-4 w-4" />
-                    {address.street}, {address.number} - {address.neighborhood}, {address.city}/{address.state}
-                  </p>
-                )}
+                {/* Contact Info */}
+                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                  {address?.city && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-4 w-4" />
+                      {address.city}/{address.state}
+                    </span>
+                  )}
+                  {company?.phone && (
+                    <span className="flex items-center gap-1">
+                      <Phone className="h-4 w-4" />
+                      {company.phone}
+                    </span>
+                  )}
+                  {company?.email && (
+                    <span className="flex items-center gap-1">
+                      <Mail className="h-4 w-4" />
+                      {company.email}
+                    </span>
+                  )}
+                  {company?.website && (
+                    <a 
+                      href={company.website} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 hover:text-primary transition-colors"
+                    >
+                      <Globe className="h-4 w-4" />
+                      Website
+                    </a>
+                  )}
+                </div>
                 
                 {/* Stats */}
-                <div className="flex gap-6 mt-4 text-sm">
-                  <div>
-                    <span className="font-semibold">{company?.rating?.toFixed(1) || "0.0"}</span>
-                    <span className="text-muted-foreground ml-1">Avaliação</span>
+                <div className="flex gap-6 pt-2">
+                  <div className="flex items-center gap-1">
+                    <Star className="h-4 w-4 text-yellow-500" />
+                    <span className="font-semibold">{stats.rating}</span>
+                    <span className="text-muted-foreground text-sm">({stats.reviews} avaliações)</span>
                   </div>
-                  <div>
-                    <span className="font-semibold">{company?.totalReviews || 0}</span>
-                    <span className="text-muted-foreground ml-1">Avaliações</span>
-                  </div>
+                  {stats.services > 0 && (
+                    <div className="text-sm">
+                      <span className="font-semibold">{stats.services}</span>
+                      <span className="text-muted-foreground ml-1">serviços</span>
+                    </div>
+                  )}
+                  {stats.professionals > 0 && (
+                    <div className="flex items-center gap-1 text-sm">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-semibold">{stats.professionals}</span>
+                      <span className="text-muted-foreground">profissionais</span>
+                    </div>
+                  )}
                   {company?.yearEstablished && (
-                    <div>
+                    <div className="text-sm">
                       <span className="font-semibold">Desde {company.yearEstablished}</span>
                     </div>
                   )}
@@ -680,40 +856,146 @@ export default function CompanyProfilePage() {
           <TabsContent value="hours">
             <Card>
               <CardHeader>
-                <CardTitle>Horário de Funcionamento</CardTitle>
-                <CardDescription>
-                  Horários em que sua empresa está aberta
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Horário de Funcionamento</CardTitle>
+                    <CardDescription>
+                      Horários em que sua empresa está aberta para atendimento
+                    </CardDescription>
+                  </div>
+                  {workingHours && !isEditingHours && (
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => setIsEditingHours(true)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Editar Horários
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
-                {parsedWorkingHours ? (
+                {!workingHours && !parsedWorkingHours ? (
+                  <div className="text-center py-8 space-y-4">
+                    <Clock className="h-12 w-12 text-muted-foreground/50 mx-auto" />
+                    <div>
+                      <p className="font-medium">Horários não configurados</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Configure os horários de funcionamento para que seus clientes possam agendar serviços.
+                      </p>
+                    </div>
+                    <Button onClick={initializeWorkingHours}>
+                      <Calendar className="h-4 w-4 mr-2" />
+                      Configurar Horários
+                    </Button>
+                  </div>
+                ) : isEditingHours ? (
                   <div className="space-y-4">
-                    {(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const).map((day) => {
-                      const schedule = parsedWorkingHours[day];
+                    {/* Quick Actions */}
+                    <div className="flex flex-wrap gap-2 pb-4 border-b">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (workingHours?.monday) {
+                            copyToWeekdays("monday");
+                          }
+                        }}
+                      >
+                        Copiar Segunda para dias úteis
+                      </Button>
+                    </div>
+
+                    {/* Days Editor */}
+                    <div className="space-y-3">
+                      {DAYS_OF_WEEK.map(({ key, label }) => {
+                        const schedule = workingHours?.[key];
+                        return (
+                          <div 
+                            key={key} 
+                            className="flex items-center gap-4 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                          >
+                            <Switch
+                              checked={schedule?.isOpen ?? false}
+                              onCheckedChange={(checked) => updateDaySchedule(key, "isOpen", checked)}
+                            />
+                            <span className="w-32 font-medium">{label}</span>
+                            
+                            {schedule?.isOpen ? (
+                              <div className="flex items-center gap-2 flex-1">
+                                <Input
+                                  type="time"
+                                  value={schedule.open || "07:00"}
+                                  onChange={(e) => updateDaySchedule(key, "open", e.target.value)}
+                                  className="w-28"
+                                />
+                                <span className="text-muted-foreground">às</span>
+                                <Input
+                                  type="time"
+                                  value={schedule.close || "18:00"}
+                                  onChange={(e) => updateDaySchedule(key, "close", e.target.value)}
+                                  className="w-28"
+                                />
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground italic">Fechado</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-2 pt-4 border-t">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setWorkingHours(parsedWorkingHours);
+                          setIsEditingHours(false);
+                          setHasWorkingHoursChanges(false);
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button 
+                        onClick={handleSaveWorkingHours}
+                        disabled={!hasWorkingHoursChanges || updateWorkingHoursMutation.isPending}
+                      >
+                        {updateWorkingHoursMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Save className="h-4 w-4 mr-2" />
+                        )}
+                        Salvar Horários
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {DAYS_OF_WEEK.map(({ key, label, shortLabel }) => {
+                      const schedule = (workingHours || parsedWorkingHours)?.[key];
+                      const isOpen = schedule?.isOpen;
                       return (
-                        <div key={day} className="flex items-center justify-between py-3 border-b last:border-b-0">
+                        <div 
+                          key={key} 
+                          className="flex items-center justify-between py-3 border-b last:border-b-0"
+                        >
                           <div className="flex items-center gap-4">
-                            <span className="w-32 font-medium">{dayNames[day]}</span>
-                            <Badge variant={schedule?.isOpen ? "default" : "secondary"}>
-                              {schedule?.isOpen ? "Aberto" : "Fechado"}
+                            <span className="w-32 font-medium">{label}</span>
+                            <Badge variant={isOpen ? "default" : "secondary"}>
+                              {isOpen ? "Aberto" : "Fechado"}
                             </Badge>
                           </div>
-                          {schedule?.isOpen && schedule.open && schedule.close && (
-                            <span className="text-muted-foreground">
+                          {isOpen && schedule?.open && schedule?.close && (
+                            <span className="text-muted-foreground font-medium">
                               {schedule.open} - {schedule.close}
                             </span>
                           )}
                         </div>
                       );
                     })}
-                    <p className="text-sm text-muted-foreground mt-4">
-                      Para alterar os horários, acesse as Configurações da empresa.
-                    </p>
                   </div>
-                ) : (
-                  <p className="text-muted-foreground text-center py-8">
-                    Nenhum horário de funcionamento configurado.
-                  </p>
                 )}
               </CardContent>
             </Card>

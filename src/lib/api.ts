@@ -203,6 +203,138 @@ export const fetchCategories = async (params?: Record<string, unknown>) => {
   return response.data;
 };
 
+// --- Unified Search API Function ---
+// Uses the unified /api/search endpoint that returns professionals, services, and companies in a single request
+export interface SearchParams {
+  q?: string;                    // Search term (name, description, role)
+  type?: 'all' | 'professionals' | 'services' | 'companies';  // Type of data to return
+  category?: string;             // Filter by category name
+  professionalTipo?: string;     // Filter by professional role/type
+  sort?: 'name' | 'rating';      // Sort order
+  page?: number;                 // Page number (default: 1)
+  limit?: number;                // Items per page (max: 50)
+  ids?: string;                  // Comma-separated list of IDs
+  professionalId?: string;       // Filter services by specific professional
+}
+
+export interface SearchProfessional {
+  id: string;
+  name: string;
+  role: string;
+  rating: number;
+  image: string | null;
+  bio?: string;
+  phone?: string;
+  company: {
+    id: string;
+    name: string;
+    logo?: string;
+  } | null;
+  services: Array<{
+    id: string;
+    name: string;
+    duration: string;
+    price: string;
+    description: string;
+    category: {
+      id: number;
+      name: string;
+      icon?: string;
+    };
+  }>;
+}
+
+export interface SearchService {
+  id: string;
+  name: string;
+  duration: string;
+  description: string;
+  price?: string;
+  image?: string;
+  category: {
+    id: number;
+    name: string;
+    icon?: string;
+  };
+  company: {
+    id: string;
+    name: string;
+    logo?: string;
+  } | null;
+  professionals: Array<{
+    id: string;
+    name: string;
+    role: string;
+    rating: number;
+    image: string | null;
+    price: string;
+    services: Array<{
+      id: string;
+      name: string;
+      duration: string;
+      price: string;
+    }>;
+  }>;
+}
+
+export interface SearchCompany {
+  id: string;
+  name: string;
+  logo?: string;
+  rating: number;
+  totalReviews: number;
+  address?: {
+    city: string;
+    state: string;
+  };
+  categories?: string[];
+}
+
+export interface SearchProfessionalService {
+  id: string;
+  name: string;
+  duration: string;
+  description: string;
+  image?: string;
+  category: {
+    id: number;
+    name: string;
+  };
+  multiServiceEnabled?: boolean;
+  price: number;
+  company: {
+    id: string;
+    name: string;
+  } | null;
+  profissional: {
+    id: string;
+    name: string;
+    role: string;
+    rating: number;
+    image: string | null;
+    company: {
+      id: string;
+      name: string;
+    } | null;
+    price: number;
+    hasMultiServiceSupport: boolean;
+  };
+}
+
+export interface SearchResponse {
+  professionals?: SearchProfessional[];
+  services?: SearchService[];
+  companies?: SearchCompany[];
+  professional_services?: SearchProfessionalService[];
+}
+
+export const fetchSearch = async (params?: SearchParams): Promise<SearchResponse> => {
+  // Filter out React Query context properties if passed directly as queryFn
+  const validParams = params && typeof params === 'object' && !('queryKey' in params) ? params : undefined;
+  const response = await apiClient.get("/search", validParams ? { params: validParams } : {});
+  return response.data;
+};
+
 // --- Services API Functions ---
 export const fetchServices = async (params?: Record<string, unknown>) => {
   // Filter out React Query context properties if passed directly as queryFn
